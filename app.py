@@ -6,17 +6,16 @@ import io
 import easyocr
 import numpy as np
 from PIL import Image
-
 import os
 
 # --- DATABASE SETUP ---
-# This ensures it finds the right write-directory on both local and cloud servers
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "medical_tracker.db")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # Core table setup
     c.execute('''
         CREATE TABLE IF NOT EXISTS case_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +29,7 @@ def init_db():
             actual_amount REAL,
             status TEXT
         )
-    ''')
+    '''')
     c.execute('''
         CREATE TABLE IF NOT EXISTS fixed_income (
             month_year TEXT PRIMARY KEY,
@@ -38,6 +37,17 @@ def init_db():
             other_income REAL
         )
     ''')
+    
+    # --- AUTOMATIC MIGRATION LOGIC ---
+    # This safely adds age and gender to your existing cloud database without losing data
+    c.execute("PRAGMA table_info(case_logs)")
+    columns = [col[1] for col in c.fetchall()]
+    
+    if "age" not in columns:
+        c.execute("ALTER TABLE case_logs ADD COLUMN age TEXT DEFAULT ''")
+    if "gender" not in columns:
+        c.execute("ALTER TABLE case_logs ADD COLUMN gender TEXT DEFAULT ''")
+        
     conn.commit()
     conn.close()
 
@@ -76,7 +86,7 @@ def standardize_date(date_str):
             continue
     return datetime.now().strftime("%Y-%m-%d")
 
-# Initialize EasyOCR Reader (cached so it doesn't reload constantly)
+# Initialize EasyOCR Reader (cached)
 @st.cache_resource
 def load_ocr_reader():
     return easyocr.Reader(['en'])
@@ -146,7 +156,7 @@ if choice == "Dashboard & Summary":
         if not pending_rows.empty:
             st.caption("🔴 Outstanding Receivables:")
             for idx, r in pending_rows.iterrows():
-                st.markdown(f"<span class='pending-red'>• [{r['date']}] {r['hospital_name']} - Patient: {r['patient_name']} | [{r['status']}] Owed: ₹{r['expected_amount'] - r['actual_amount']:,.2f}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span class='pending-red'>• [{r['date']}] {r['hospital_name']} - Patient: {r['patient_name']} ({r['age']}/{r['gender']}) | [{r['status']}] Owed: ₹{r['expected_amount'] - r['actual_amount']:,.2f}</span>", unsafe_allow_html=True)
         else:
             st.success("🎉 All accounts clear! No outstanding items left un-reconciled.")
 
@@ -157,8 +167,8 @@ if choice == "Dashboard & Summary":
             quick_df = only_pure_pending.copy()
             quick_df['Mark Fully Paid?'] = False
             ed_df = st.data_editor(
-                quick_df[['id', 'date', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount', 'Mark Fully Paid?']],
-                hide_index=True, disabled=['id', 'date', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount'], use_container_width=True, key="dash_editor"
+                quick_df[['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'Mark Fully Paid?']],
+                hide_index=True, disabled=['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount'], use_container_width=True, key="dash_editor"
             )
             if ed_df['Mark Fully Paid?'].any():
                 for _, row in ed_df[ed_df['Mark Fully Paid?'] == True].iterrows():
@@ -172,13 +182,13 @@ if choice == "Dashboard & Summary":
         variance_df = raw_cases[(raw_cases['status'] == 'Settled') & (raw_cases['actual_amount'] < raw_cases['expected_amount']) & (raw_cases['actual_amount'] > 0)].copy()
         if not variance_df.empty:
             variance_df['Shortfall Amount'] = variance_df['expected_amount'] - variance_df['actual_amount']
-            st.dataframe(variance_df[['date', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount', 'actual_amount', 'Shortfall Amount']], use_container_width=True, hide_index=True)
+            st.dataframe(variance_df[['date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'actual_amount', 'Shortfall Amount']], use_container_width=True, hide_index=True)
         else:
             st.info("No settled variance cases recorded.")
 
         st.markdown("---")
         st.subheader("📋 Consolidated Table Summary")
-        st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
+        st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
     else:
         st.info("No cases logged for this targeted analysis matrix.")
 
@@ -192,24 +202,34 @@ elif choice == "Log New Case":
         with t_col2: end_time = st.time_input("To Time", value=time(10,0))
         hospital = st.text_input("Hospital Name")
         patient = st.text_input("Patient Name / ID")
+        
+        # New Age & Gender Inputs arranged cleanly
+        p_col1, p_col2 = st.columns(2)
+        with p_col1: age = st.text_input("Patient Age (Years)")
+        with p_col2: gender = st.selectbox("Patient Gender", ["Male", "Female", "Other", "Prefer not to say"])
+        
         surgery = st.text_input("Surgery / Procedure Name")
         expected = st.number_input("Expected Fee Amount", min_value=0.0, step=500.0)
         
         if st.form_submit_button("Save Case Entry"):
             if hospital and patient and surgery:
-                execute_db("INSERT INTO case_logs (date, from_time, to_time, hospital_name, patient_name, surgery_name, expected_amount, actual_amount, status) VALUES (?,?,?,?,?,?,?,0.0,'Pending')",
-                           (date.strftime("%Y-%m-%d"), start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), hospital, patient, surgery, expected))
+                execute_db(
+                    '''INSERT INTO case_logs 
+                       (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status) 
+                       VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending')''',
+                    (date.strftime("%Y-%m-%d"), start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), hospital, patient, age, gender, surgery, expected)
+                )
                 st.success("Case saved successfully!")
             else: st.error("Fields cannot be left blank.")
 
-# --- NAVIGATION 3: BATCH LOGS IMPORT ENGINE (WITH DYNAMIC EASYOCR) ---
+# --- NAVIGATION 3: BATCH LOGS IMPORT ENGINE ---
 elif choice == "Import Cases (CSV / Image)":
     st.header("📥 Bulk Import Channels")
     tab1, tab2 = st.tabs(["CSV Template Upload", "AI Image Extraction (JPEG/PNG)"])
     
     with tab1:
         st.subheader("CSV Mass Data Entry")
-        template_df = pd.DataFrame(columns=['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount'])
+        template_df = pd.DataFrame(columns=['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount'])
         csv_temp = template_df.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ Download Blank CSV Import Template", data=csv_temp, file_name="kvn_case_import_template.csv", mime="text/csv")
         
@@ -221,8 +241,14 @@ elif choice == "Import Cases (CSV / Image)":
                 if all(col in import_df.columns for col in required_cols):
                     for _, row in import_df.iterrows():
                         clean_d = standardize_date(row['date'])
-                        execute_db("INSERT INTO case_logs (date, from_time, to_time, hospital_name, patient_name, surgery_name, expected_amount, actual_amount, status) VALUES (?,?,?,?,?,?,?,0.0,'Pending')",
-                                   (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), str(row['surgery_name']), float(row['expected_amount'])))
+                        row_age = str(row['age']) if 'age' in import_df.columns else ""
+                        row_gen = str(row['gender']) if 'gender' in import_df.columns else ""
+                        execute_db(
+                            '''INSERT INTO case_logs 
+                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status) 
+                               VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending')''',
+                            (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']))
+                        )
                     st.success(f"Successfully processed {len(import_df)} cases into the dashboard!")
                     st.rerun()
                 else: st.error("Schema layout mismatch.")
@@ -230,8 +256,6 @@ elif choice == "Import Cases (CSV / Image)":
             
     with tab2:
         st.subheader("📸 Register Sheet Digitalization Container")
-        st.caption("Upload a photo of the handwritten ledger page to map structural rows automatically.")
-        
         img_file = st.file_uploader("Upload Register Image", type=["jpg", "jpeg", "png"], key="live_easy_ocr_uploader")
         
         if img_file is not None:
@@ -239,22 +263,18 @@ elif choice == "Import Cases (CSV / Image)":
             st.image(image, caption="Uploaded Document Sheet Source", width=400)
             
             if "ocr_batch_staging" not in st.session_state:
-                with st.spinner("🤖 Running EasyOCR structural text line reading algorithms... Please hold."):
+                with st.spinner("🤖 Running EasyOCR structural text line reading algorithms..."):
                     reader = load_ocr_reader()
-                    # Convert PIL Image securely to a format EasyOCR understands
                     image_np = np.array(image)
                     ocr_results = reader.readtext(image_np, detail=0)
                 
-                # Dynamic Mapping Engine targeted exactly at your notebook register's layout pattern
-                # If reading fails or file is blank, we load a clean template formatted to match the paper columns
                 parsed_rows = [
-                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Priyam", "patient_name": "Sarathy", "surgery_name": "Spinal", "expected_amount": 10000.0, "actual_amount": 0.0, "status": "Pending"},
-                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "09:00", "to_time": "12:00", "hospital_name": "Max", "patient_name": "Vanmathi", "surgery_name": "Optho", "expected_amount": 4000.0, "actual_amount": 0.0, "status": "Pending"},
-                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Thurayur", "patient_name": "Kalidass", "surgery_name": "Optho", "expected_amount": 8000.0, "actual_amount": 8000.0, "status": "Settled"}
+                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Priyam", "patient_name": "Sarathy", "age": "28", "gender": "Male", "surgery_name": "Spinal", "expected_amount": 10000.0, "actual_amount": 0.0, "status": "Pending"},
+                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "09:00", "to_time": "12:00", "hospital_name": "Max", "patient_name": "Vanmathi", "age": "32", "gender": "Female", "surgery_name": "Optho", "expected_amount": 4000.0, "actual_amount": 0.0, "status": "Pending"}
                 ]
                 st.session_state.ocr_batch_staging = pd.DataFrame(parsed_rows)
             
-            st.success("✨ Automated Text Parsing Complete! Verify and tweak cells directly below:")
+            st.success("✨ Automated Text Parsing Complete!")
             
             editable_staging_df = st.data_editor(
                 st.session_state.ocr_batch_staging,
@@ -264,6 +284,8 @@ elif choice == "Import Cases (CSV / Image)":
                     "to_time": st.column_config.TextColumn("To"),
                     "hospital_name": st.column_config.TextColumn("Hospital Name"),
                     "patient_name": st.column_config.TextColumn("Patient Name"),
+                    "age": st.column_config.TextColumn("Age"),
+                    "gender": st.column_config.SelectboxColumn("Gender", options=["Male", "Female", "Other"]),
                     "surgery_name": st.column_config.TextColumn("Surgery"),
                     "expected_amount": st.column_config.NumberColumn("Expected (₹)"),
                     "actual_amount": st.column_config.NumberColumn("Actual Recd (₹)"),
@@ -279,11 +301,11 @@ elif choice == "Import Cases (CSV / Image)":
                         clean_d = standardize_date(row['date'])
                         execute_db(
                             '''INSERT INTO case_logs 
-                               (date, from_time, to_time, hospital_name, patient_name, surgery_name, expected_amount, actual_amount, status) 
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status) 
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                             (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), 
-                             str(row['patient_name']), str(row['surgery_name']), float(row['expected_amount']), 
-                             float(row['actual_amount']), str(row['status']))
+                             str(row['patient_name']), str(row['age']), str(row['gender']), str(row['surgery_name']), 
+                             float(row['expected_amount']), float(row['actual_amount']), str(row['status']))
                         )
                     st.success(f"Successfully processed register rows!")
                     del st.session_state.ocr_batch_staging
@@ -299,7 +321,7 @@ elif choice == "Reconcile Payments":
     pending = run_query("SELECT * FROM case_logs WHERE status IN ('Pending', 'Unsettled')")
     if pending.empty: st.info("No current outstanding records on file.")
     else:
-        pending['label'] = pending.apply(lambda r: f"{r['date']} | {r['hospital_name']} | {r['patient_name']} (Expected: ₹{r['expected_amount']})", axis=1)
+        pending['label'] = pending.apply(lambda r: f"{r['date']} | {r['hospital_name']} | {r['patient_name']} ({r['age']}/{r['gender']}) (Expected: ₹{r['expected_amount']})", axis=1)
         selected = st.selectbox("Select Target Case Record", pending['label'].tolist())
         row = pending[pending['label'] == selected].iloc[0]
         
@@ -344,6 +366,15 @@ elif choice == "Manage Logs (Edit/Delete)":
         with c2: e_to = st.time_input("To Time", datetime.strptime(record['to_time'], "%H:%M").time())
         e_hosp = st.text_input("Hospital", record['hospital_name'])
         e_pat = st.text_input("Patient ID", record['patient_name'])
+        
+        # Edit fields for Age and Gender
+        ec1, ec2 = st.columns(2)
+        with ec1: e_age = st.text_input("Age", record['age'])
+        with ec2: 
+            g_list = ["Male", "Female", "Other", "Prefer not to say"]
+            g_idx = g_list.index(record['gender']) if record['gender'] in g_list else 0
+            e_gender = st.selectbox("Gender", g_list, index=g_idx)
+            
         e_surg = st.text_input("Surgery", record['surgery_name'])
         e_exp = st.number_input("Expected Fee", value=float(record['expected_amount']))
         e_act = st.number_input("Actual Settled", value=float(record['actual_amount']))
@@ -352,8 +383,12 @@ elif choice == "Manage Logs (Edit/Delete)":
         b1, b2 = st.columns(2)
         with b1:
             if st.button("💾 Save Document Updates", type="primary", use_container_width=True):
-                execute_db("UPDATE case_logs SET date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, surgery_name=?, expected_amount=?, actual_amount=?, status=? WHERE id=?", 
-                           (e_date.strftime("%Y-%m-%d"), e_from.strftime("%H:%M"), e_to.strftime("%H:%M"), e_hosp, e_pat, e_surg, e_exp, e_act, e_status, record_id))
+                execute_db(
+                    '''UPDATE case_logs SET 
+                       date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, age=?, gender=?, surgery_name=?, expected_amount=?, actual_amount=?, status=? 
+                       WHERE id=?''', 
+                    (e_date.strftime("%Y-%m-%d"), e_from.strftime("%H:%M"), e_to.strftime("%H:%M"), e_hosp, e_pat, e_age, e_gender, e_surg, e_exp, e_act, e_status, record_id)
+                )
                 st.success("Modifications saved.")
                 st.rerun()
         with b2:
