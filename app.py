@@ -262,79 +262,97 @@ if choice == "Dashboard & Summary":
     # ==========================================
     # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT
     # ==========================================
+    # ==========================================
+    # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT (P&L REVENUE STATEMENT FORMAT)
+    # ==========================================
     elif view_mode == "Cross-Month Comparative Audit":
-        st.subheader("⚔️ Variance Analysis Model Matrix")
+        st.subheader("📋 Comparative Revenue Statement")
         
         comp_col1, comp_col2 = st.columns(2)
         with comp_col1:
-            month_a = st.selectbox("Baseline Domain Month (Period A)", available_months, index=0)
+            month_a = st.selectbox("Select Period A (Current Month)", available_months, index=0)
         with comp_col2:
-            # Default to prior index configuration loop if arrays permit
             alt_idx = 1 if len(available_months) > 1 else 0
-            month_b = st.selectbox("Comparison Domain Month (Period B)", available_months, index=alt_idx)
+            month_b = st.selectbox("Select Period B (Comparison Month)", available_months, index=alt_idx)
             
         if month_a == month_b:
-            st.info("Please configure distinct months for comparative variance tracking analytics.")
+            st.info("Please select two distinct months to generate a comparative statement.")
         else:
-            # Functional dynamic logic block for Period A metrics computation
-            cases_a = run_query("SELECT actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_a,))
+            # 1. Fetch complete data profiles including hospital identifiers for both terms
+            cases_a = run_query("SELECT hospital_name, actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_a,))
             inc_a = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_a,))
-            net_a = (cases_a['actual_amount'].sum() if not cases_a.empty else 0.0) + (inc_a['salary'].sum() + inc_a['other_income'].sum() if not inc_a.empty else 0.0)
             
-            # Functional dynamic logic block for Period B metrics computation
-            cases_b = run_query("SELECT actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_b,))
+            cases_b = run_query("SELECT hospital_name, actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_b,))
             inc_b = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_b,))
-            net_b = (cases_b['actual_amount'].sum() if not cases_b.empty else 0.0) + (inc_b['salary'].sum() + inc_b['other_income'].sum() if not inc_b.empty else 0.0)
             
-            # Variance math metrics
-            net_variance = net_a - net_b
-            pct_delta = ((net_variance / net_b * 100) if net_b > 0 else 0.0)
+            # Extract basic fixed revenue data values
+            sal_a = inc_a['salary'].sum() if not inc_a.empty else 0.0
+            oth_a = inc_a['other_income'].sum() if not inc_a.empty else 0.0
             
-            st.markdown("### Executive Performance Audit Summary")
-            cc1, cc2, cc3 = st.columns(3)
-            cc1.metric(f"Net Revenue ({month_a})", f"₹{net_a:,.2f}")
-            cc2.metric(f"Net Revenue ({month_b})", f"₹{net_b:,.2f}")
-            cc3.metric(
-                "Net Absolute Shift / Variance", 
-                f"₹{net_variance:,.2f}", 
-                delta=f"{pct_delta:+.2f}% vs Period B",
-                delta_color="normal"
-            )
+            sal_b = inc_b['salary'].sum() if not inc_b.empty else 0.0
+            oth_b = inc_b['other_income'].sum() if not inc_b.empty else 0.0
             
-            # Side-by-side hospital pipeline variance comparison map arrays
-            st.markdown("---")
-            st.markdown("#### Hospital Volume Discrepancy Allocation Breakdown")
+            # Map itemized hospital earnings tables securely
+            hosp_a_series = cases_a.groupby('hospital_name')['actual_amount'].sum() if not cases_a.empty else pd.Series(dtype=float)
+            hosp_b_series = cases_b.groupby('hospital_name')['actual_amount'].sum() if not cases_b.empty else pd.Series(dtype=float)
+            all_hospitals = sorted(list(set(hosp_a_series.index).union(set(hosp_b_series.index))))
             
-            hosp_a_sum = cases_a.groupby('hospital_name')['actual_amount'].sum() if not cases_a.empty else pd.Series(dtype=float)
-            hosp_b_sum = cases_b.groupby('hospital_name')['actual_amount'].sum() if not cases_b.empty else pd.Series(dtype=float)
+            # 2. Build a structured presentation ledger layout matching a P&L document flow
+            pl_rows = []
             
-            # Combine all hospital keys seen across both target domains safely
-            all_hospitals = sorted(list(set(hosp_a_sum.index).union(set(hosp_b_sum.index))))
+            # --- SECTION I: FIXED PROFESSIONAL INFLOWS ---
+            pl_rows.append({"Revenue Stream Component": "PART I: FIXED PROFESSIONAL REVENUE", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Absolute Increase / (Decrease)": None})
+            pl_rows.append({"Revenue Stream Component": "  • Base Professional Retainer / Salary", f"Period A ({month_a})": sal_a, f"Period B ({month_b})": sal_b, "Absolute Increase / (Decrease)": sal_a - sal_b})
+            pl_rows.append({"Revenue Stream Component": "  • Other Capital / Auxiliary Income", f"Period A ({month_a})": oth_a, f"Period B ({month_b})": oth_b, "Absolute Increase / (Decrease)": oth_a - oth_b})
             
-            comp_rows = []
+            # --- SECTION II: VARIABLE SURGICAL INFLOWS ---
+            pl_rows.append({"Revenue Stream Component": "PART II: VARIABLE SURGICAL CASE FEES", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Absolute Increase / (Decrease)": None})
+            
+            tot_hosp_a = 0.0
+            tot_hosp_b = 0.0
+            
             for h_name in all_hospitals:
-                val_a = hosp_a_sum.get(h_name, 0.0)
-                val_b = hosp_b_sum.get(h_name, 0.0)
-                comp_rows.append({
-                    "Target Hospital Facility": h_name,
-                    f"Revenue in A ({month_a})": val_a,
-                    f"Revenue in B ({month_b})": val_b,
-                    "Net Discrepancy Margin": val_a - val_b
+                val_a = hosp_a_series.get(h_name, 0.0)
+                val_b = hosp_b_series.get(h_name, 0.0)
+                tot_hosp_a += val_a
+                tot_hosp_b += val_b
+                pl_rows.append({
+                    "Revenue Stream Component": f"  • {h_name} Hospital",
+                    f"Period A ({month_a})": val_a,
+                    f"Period B ({month_b})": val_b,
+                    "Absolute Increase / (Decrease)": val_a - val_b
                 })
                 
-            if comp_rows:
-                df_comp_grid = pd.DataFrame(comp_rows)
-                st.dataframe(
-                    df_comp_grid.style.format({
-                        f"Revenue in A ({month_a})": "₹{:,.2f}",
-                        f"Revenue in B ({month_b})": "₹{:,.2f}",
-                        "Net Discrepancy Margin": "₹{:,.2f}"
-                    }),
-                    use_container_width=True, hide_index=True
-                )
-            else:
-                st.info("No case metrics recorded within target timelines configuration frameworks.")
-                
+            # Add section sub-totals if hospital lists are active
+            pl_rows.append({"Revenue Stream Component": "TOTAL SURGICAL PRACTICE INFLOWS", f"Period A ({month_a})": tot_hosp_a, f"Period B ({month_b})": tot_hosp_b, "Absolute Increase / (Decrease)": tot_hosp_a - tot_hosp_b})
+            
+            # --- SECTION III: TOTAL REVENUE SUMMARY ---
+            grand_a = sal_a + oth_a + tot_hosp_a
+            grand_b = sal_b + oth_b + tot_hosp_b
+            
+            pl_rows.append({"Revenue Stream Component": "────────────────────────────────────────", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Absolute Increase / (Decrease)": None})
+            pl_rows.append({"Revenue Stream Component": "TOTAL COMBINED NET OPERATING REVENUE", f"Period A ({month_a})": grand_a, f"Period B ({month_b})": grand_b, "Absolute Increase / (Decrease)": grand_a - grand_b})
+            
+            # Convert raw rows to dataframes and apply custom visibility formatting
+            df_pl = pd.DataFrame(pl_rows)
+            
+            # Custom currency cell formatting function that safely skips empty formatting header rows
+            def format_currency_statement(val):
+                if pd.isna(val) or val is None:
+                    return ""
+                if val < 0:
+                    return f"₹({abs(val):,.2f})"
+                return f"₹{val:,.2f}"
+
+            formatted_df = df_pl.style.format({
+                f"Period A ({month_a})": format_currency_statement,
+                f"Period B ({month_b})": format_currency_statement,
+                "Absolute Increase / (Decrease)": format_currency_statement
+            })
+            
+            # Display clean layout grid
+            st.markdown("---")
+            st.dataframe(formatted_df, use_container_width=True, hide_index=True)                
 # --- NAVIGATION 2: LOG NEW CASE ---
 elif choice == "Log New Case":
     st.header("📝 Log Daily Surgery Details")
