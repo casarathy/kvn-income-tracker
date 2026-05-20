@@ -322,7 +322,7 @@ if choice == "Dashboard & Summary":
             inc_a = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_a,))
             
             cases_b = run_query(f"SELECT hospital_name, {val_column} FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_b,))
-            inc_b = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_b регулярно,))
+            inc_b = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_b,))
             
             sal_a = inc_a['salary'].sum() if not inc_a.empty else 0.0
             oth_a = inc_a['other_income'].sum() if not inc_a.empty else 0.0
