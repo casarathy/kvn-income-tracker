@@ -115,85 +115,226 @@ menu = ["Dashboard & Summary", "Log New Case", "Import Cases (CSV / Image)", "Re
 choice = st.sidebar.selectbox("Navigation Menu", menu)
 
 # --- NAVIGATION 1: DASHBOARD & SUMMARY ---
+# --- NAVIGATION 1: DASHBOARD & SUMMARY ---
 if choice == "Dashboard & Summary":
-    st.header("📊 Monthly Financial Overview")
+    st.header("📊 Advanced Financial Analytics Panel")
+    
+    # 1. MODE SELECTION FOR HIGHER VISIBILITY ANALYTICS
+    view_mode = st.radio(
+        "Choose Analytics Workspace", 
+        ["Single Month Breakdown", "Multi-Month Aggregated View", "Cross-Month Comparative Audit"], 
+        horizontal=True
+    )
     
     available_months = get_all_available_months()
-    selected_month = st.selectbox("Select Month for Analysis", available_months, index=0)
-    
-    raw_cases = run_query("SELECT * FROM case_logs WHERE strftime('%Y-%m', date) = ? ORDER BY date DESC, from_time DESC", (selected_month,))
-    income_df = run_query("SELECT * FROM fixed_income WHERE month_year = ?", (selected_month,))
-    
-    salary = income_df['salary'].iloc[0] if not income_df.empty else 0.0
-    other = income_df['other_income'].iloc[0] if not income_df.empty else 0.0
-    
-    if not raw_cases.empty:
-        def compute_outstanding(row):
-            if row['status'] in ['Pending', 'Unsettled']:
-                return row['expected_amount'] - row['actual_amount']
-            return 0.0
-
-        raw_cases['pending_balance'] = raw_cases.apply(compute_outstanding, axis=1)
-        
-        total_expected = raw_cases['expected_amount'].sum()
-        total_actual = raw_cases['actual_amount'].sum()
-        pending_receivables = raw_cases['pending_balance'].sum()
-    else:
-        total_expected, total_actual, pending_receivables = 0.0, 0.0, 0.0
-        
-    total_net_income = total_actual + salary + other
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Expected Fees (Cases)", f"₹{total_expected:,.2f}")
-    col2.metric("Collected Fees (Cases)", f"₹{total_actual:,.2f}")
-    col3.metric("True Pending Receivables", f"₹{pending_receivables:,.2f}")
-    col4.metric("Total Net Monthly Income", f"₹{total_net_income:,.2f}")
-    
     st.markdown("---")
-    
-    if not raw_cases.empty:
-        st.subheader("⚡ Quick Status Board")
-        pending_rows = raw_cases[raw_cases['status'].isin(['Pending', 'Unsettled'])]
+
+    # ==========================================
+    # WORKSPACE A: SINGLE MONTH BREAKDOWN
+    # ==========================================
+    if view_mode == "Single Month Breakdown":
+        selected_month = st.selectbox("Select Target Month for Analysis", available_months, index=0, key="single_m")
         
-        if not pending_rows.empty:
-            st.caption("🔴 Outstanding Receivables:")
-            for idx, r in pending_rows.iterrows():
-                st.markdown(f"<span class='pending-red'>• [{r['date']}] {r['hospital_name']} - Patient: {r['patient_name']} ({r['age']}/{r['gender']}) | [{r['status']}] Owed: ₹{r['expected_amount'] - r['actual_amount']:,.2f}</span>", unsafe_allow_html=True)
+        # Pull transactional subsets
+        raw_cases = run_query("SELECT * FROM case_logs WHERE strftime('%Y-%m', date) = ? ORDER BY date DESC", (selected_month,))
+        income_df = run_query("SELECT * FROM fixed_income WHERE month_year = ?", (selected_month,))
+        
+        salary = income_df['salary'].iloc[0] if not income_df.empty else 0.0
+        other = income_df['other_income'].iloc[0] if not income_df.empty else 0.0
+        
+        if not raw_cases.empty:
+            raw_cases['pending_balance'] = raw_cases.apply(lambda r: (r['expected_amount'] - r['actual_amount']) if r['status'] in ['Pending', 'Unsettled'] else 0.0, axis=1)
+            total_expected = raw_cases['expected_amount'].sum()
+            total_actual = raw_cases['actual_amount'].sum()
+            pending_receivables = raw_cases['pending_balance'].sum()
         else:
-            st.success("🎉 All accounts clear! No outstanding items left un-reconciled.")
+            total_expected, total_actual, pending_receivables = 0.0, 0.0, 0.0
+            
+        total_net_income = total_actual + salary + other
 
+        # Core Metrics Rendering Block
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Expected Fees (Cases)", f"₹{total_expected:,.2f}")
+        col2.metric("Collected Fees (Cases)", f"₹{total_actual:,.2f}")
+        col3.metric("True Pending Receivables", f"₹{pending_receivables:,.2f}")
+        col4.metric("Total Net Monthly Income", f"₹{total_net_income:,.2f}")
+        
         st.markdown("---")
-        st.subheader("🏁 Quick Reconcile Checklist")
-        only_pure_pending = raw_cases[raw_cases['status'] == 'Pending']
-        if not only_pure_pending.empty:
-            quick_df = only_pure_pending.copy()
-            quick_df['Mark Fully Paid?'] = False
-            ed_df = st.data_editor(
-                quick_df[['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'Mark Fully Paid?']],
-                hide_index=True, disabled=['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount'], use_container_width=True, key="dash_editor"
+        
+        # NEW SECTION: REVENUE BREAKDOWN BLOCK BY PIPELINE SOURCE
+        st.subheader("📑 Income Stream Breakdown Matrix")
+        
+        breakdown_data = []
+        if salary > 0:
+            breakdown_data.append({"Income Stream / Source": "Fixed Professional Retainer / Salary", "Type": "Fixed Income", "Collected Revenue": salary})
+        if other > 0:
+            breakdown_data.append({"Income Stream / Source": "Other Capital / Auxiliary Streams", "Type": "Fixed Income", "Collected Revenue": other})
+            
+        if not raw_cases.empty:
+            # Group surgical payouts dynamically by individual hospitals
+            hosp_groups = raw_cases.groupby('hospital_name')['actual_amount'].sum().reset_index()
+            for _, h_row in hosp_groups.iterrows():
+                if h_row['actual_amount'] > 0:
+                    breakdown_data.append({
+                        "Income Stream / Source": f"Hospital Fees: {h_row['hospital_name']}",
+                        "Type": "Variable Surgical Cases",
+                        "Collected Revenue": h_row['actual_amount']
+                    })
+                    
+        if breakdown_data:
+            df_breakdown = pd.DataFrame(breakdown_data)
+            df_breakdown['Contribution %'] = (df_breakdown['Collected Revenue'] / total_net_income * 100).round(2).astype(str) + ' %'
+            st.dataframe(df_breakdown, use_container_width=True, hide_index=True)
+        else:
+            st.info("No verified streams registered for this specific timeframe range.")
+
+        # Status boards and administrative tables remain integrated underneath
+        st.markdown("---")
+        st.subheader("⚡ Quick Status Board")
+        if not raw_cases.empty:
+            pending_rows = raw_cases[raw_cases['status'].isin(['Pending', 'Unsettled'])]
+            if not pending_rows.empty:
+                for idx, r in pending_rows.iterrows():
+                    st.markdown(f"<span class='pending-red'>• [{r['date']}] {r['hospital_name']} - Patient: {r['patient_name']} ({r['age']}/{r['gender']}) | Owed: ₹{r['expected_amount'] - r['actual_amount']:,.2f}</span>", unsafe_allow_html=True)
+            else:
+                st.success("🎉 All accounts clear! No outstanding items left un-reconciled.")
+        else:
+            st.info("No cases logged for this targeted analysis matrix.")
+
+    # ==========================================
+    # WORKSPACE B: MULTI-MONTH AGGREGATED VIEW
+    # ==========================================
+    elif view_mode == "Multi-Month Aggregated View":
+        st.subheader("🗓️ Cumulative Performance Selector")
+        selected_months = st.multiselect("Select Months to Aggregate Together", available_months, default=[available_months[0]])
+        
+        if not selected_months:
+            st.warning("Please select at least one month from the configuration filter.")
+        else:
+            # Aggregate dynamic parameters across multiple periods securely
+            placeholders = ",".join("?" for _ in selected_months)
+            agg_cases = run_query(f"SELECT * FROM case_logs WHERE strftime('%Y-%m', date) IN ({placeholders})", selected_months)
+            agg_income = run_query(f"SELECT * FROM fixed_income WHERE month_year IN ({placeholders})", selected_months)
+            
+            sum_salary = agg_income['salary'].sum() if not agg_income.empty else 0.0
+            sum_other = agg_income['other_income'].sum() if not agg_income.empty else 0.0
+            
+            if not agg_cases.empty:
+                agg_cases['pending_balance'] = agg_cases.apply(lambda r: (r['expected_amount'] - r['actual_amount']) if r['status'] in ['Pending', 'Unsettled'] else 0.0, axis=1)
+                tot_exp = agg_cases['expected_amount'].sum()
+                tot_act = agg_cases['actual_amount'].sum()
+                tot_pend = agg_cases['pending_balance'].sum()
+            else:
+                tot_exp, tot_act, tot_pend = 0.0, 0.0, 0.0
+                
+            grand_net = tot_act + sum_salary + sum_other
+            
+            # Cumulative Metric Summary Panel Blocks
+            st.markdown("#### Consolidated Totals for Selection Loop")
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Combined Case Volume (Expected)", f"₹{tot_exp:,.2f}")
+            mc2.metric("Combined Case Payouts (Collected)", f"₹{tot_act:,.2f}")
+            mc3.metric("Aggregate Owed Receivables", f"₹{tot_pend:,.2f}")
+            mc4.metric("True Aggregate Revenue Stream", f"₹{grand_net:,.2f}", delta=f"{len(selected_months)} Months Aggregated")
+            
+            st.markdown("---")
+            st.subheader("📑 Global Pipeline Split (Aggregated over Selection)")
+            
+            agg_breakdown = []
+            if sum_salary > 0:
+                agg_breakdown.append({"Income Source Channel": "Professional Retainer Retainers (Combined)", "Collected Amount": sum_salary})
+            if sum_other > 0:
+                agg_breakdown.append({"Income Source Channel": "Auxiliary Capital Inflows (Combined)", "Collected Amount": sum_other})
+                
+            if not agg_cases.empty:
+                h_agg = agg_cases.groupby('hospital_name')['actual_amount'].sum().reset_index()
+                for _, h_row in h_agg.iterrows():
+                    if h_row['actual_amount'] > 0:
+                        agg_breakdown.append({"Income Source Channel": f"Hospital Stream Summary: {h_row['hospital_name']}", "Collected Amount": h_row['actual_amount']})
+                        
+            if agg_breakdown:
+                df_agg_b = pd.DataFrame(agg_breakdown)
+                df_agg_b['% of Aggregate Net Pool'] = (df_agg_b['Collected Amount'] / grand_net * 100).round(2).astype(str) + ' %'
+                st.dataframe(df_agg_b, use_container_width=True, hide_index=True)
+            else:
+                st.info("No transactional volume maps inside selected filter subsets.")
+
+    # ==========================================
+    # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT
+    # ==========================================
+    elif view_mode == "Cross-Month Comparative Audit":
+        st.subheader("⚔️ Variance Analysis Model Matrix")
+        
+        comp_col1, comp_col2 = st.columns(2)
+        with comp_col1:
+            month_a = st.selectbox("Baseline Domain Month (Period A)", available_months, index=0)
+        with comp_col2:
+            # Default to prior index configuration loop if arrays permit
+            alt_idx = 1 if len(available_months) > 1 else 0
+            month_b = st.selectbox("Comparison Domain Month (Period B)", available_months, index=alt_idx)
+            
+        if month_a == month_b:
+            st.info("Please configure distinct months for comparative variance tracking analytics.")
+        else:
+            # Functional dynamic logic block for Period A metrics computation
+            cases_a = run_query("SELECT actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_a,))
+            inc_a = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_a,))
+            net_a = (cases_a['actual_amount'].sum() if not cases_a.empty else 0.0) + (inc_a['salary'].sum() + inc_a['other_income'].sum() if not inc_a.empty else 0.0)
+            
+            # Functional dynamic logic block for Period B metrics computation
+            cases_b = run_query("SELECT actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_b,))
+            inc_b = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_b,))
+            net_b = (cases_b['actual_amount'].sum() if not cases_b.empty else 0.0) + (inc_b['salary'].sum() + inc_b['other_income'].sum() if not inc_b.empty else 0.0)
+            
+            # Variance math metrics
+            net_variance = net_a - net_b
+            pct_delta = ((net_variance / net_b * 100) if net_b > 0 else 0.0)
+            
+            st.markdown("### Executive Performance Audit Summary")
+            cc1, cc2, cc3 = st.columns(3)
+            cc1.metric(f"Net Revenue ({month_a})", f"₹{net_a:,.2f}")
+            cc2.metric(f"Net Revenue ({month_b})", f"₹{net_b:,.2f}")
+            cc3.metric(
+                "Net Absolute Shift / Variance", 
+                f"₹{net_variance:,.2f}", 
+                delta=f"{pct_delta:+.2f}% vs Period B",
+                delta_color="normal"
             )
-            if ed_df['Mark Fully Paid?'].any():
-                for _, row in ed_df[ed_df['Mark Fully Paid?'] == True].iterrows():
-                    execute_db("UPDATE case_logs SET actual_amount = expected_amount, status = 'Settled' WHERE id = ?", (int(row['id']),))
-                st.rerun()
-        else:
-            st.info("No un-reconciled cases left matching standard check parameters.")
-
-        st.markdown("---")
-        st.subheader("⚖️ Received Mismatch & Variance Audit Log")
-        variance_df = raw_cases[(raw_cases['status'] == 'Settled') & (raw_cases['actual_amount'] < raw_cases['expected_amount']) & (raw_cases['actual_amount'] > 0)].copy()
-        if not variance_df.empty:
-            variance_df['Shortfall Amount'] = variance_df['expected_amount'] - variance_df['actual_amount']
-            st.dataframe(variance_df[['date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'actual_amount', 'Shortfall Amount']], use_container_width=True, hide_index=True)
-        else:
-            st.info("No settled variance cases recorded.")
-
-        st.markdown("---")
-        st.subheader("📋 Consolidated Table Summary")
-        st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
-    else:
-        st.info("No cases logged for this targeted analysis matrix.")
-
+            
+            # Side-by-side hospital pipeline variance comparison map arrays
+            st.markdown("---")
+            st.markdown("#### Hospital Volume Discrepancy Allocation Breakdown")
+            
+            hosp_a_sum = cases_a.groupby('hospital_name')['actual_amount'].sum() if not cases_a.empty else pd.Series(dtype=float)
+            hosp_b_sum = cases_b.groupby('hospital_name')['actual_amount'].sum() if not cases_b.empty else pd.Series(dtype=float)
+            
+            # Combine all hospital keys seen across both target domains safely
+            all_hospitals = sorted(list(set(hosp_a_sum.index).union(set(hosp_b_sum.index))))
+            
+            comp_rows = []
+            for h_name in all_hospitals:
+                val_a = hosp_a_sum.get(h_name, 0.0)
+                val_b = hosp_b_sum.get(h_name, 0.0)
+                comp_rows.append({
+                    "Target Hospital Facility": h_name,
+                    f"Revenue in A ({month_a})": val_a,
+                    f"Revenue in B ({month_b})": val_b,
+                    "Net Discrepancy Margin": val_a - val_b
+                })
+                
+            if comp_rows:
+                df_comp_grid = pd.DataFrame(comp_rows)
+                st.dataframe(
+                    df_comp_grid.style.format({
+                        f"Revenue in A ({month_a})": "₹{:,.2f}",
+                        f"Revenue in B ({month_b})": "₹{:,.2f}",
+                        "Net Discrepancy Margin": "₹{:,.2f}"
+                    }),
+                    use_container_width=True, hide_index=True
+                )
+            else:
+                st.info("No case metrics recorded within target timelines configuration frameworks.")
+                
 # --- NAVIGATION 2: LOG NEW CASE ---
 elif choice == "Log New Case":
     st.header("📝 Log Daily Surgery Details")
