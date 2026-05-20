@@ -29,7 +29,7 @@ def init_db():
             actual_amount REAL,
             status TEXT
         )
-    '''')
+    ''')
     c.execute('''
         CREATE TABLE IF NOT EXISTS fixed_income (
             month_year TEXT PRIMARY KEY,
