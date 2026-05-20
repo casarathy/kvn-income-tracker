@@ -7,8 +7,12 @@ import easyocr
 import numpy as np
 from PIL import Image
 
+import os
+
 # --- DATABASE SETUP ---
-DB_FILE = "medical_tracker.db"
+# This ensures it finds the right write-directory on both local and cloud servers
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, "medical_tracker.db")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
