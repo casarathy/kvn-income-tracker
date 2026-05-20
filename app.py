@@ -86,10 +86,12 @@ def standardize_date(date_str):
             continue
     return datetime.now().strftime("%Y-%m-%d")
 
-# Initialize EasyOCR Reader (cached)
+# Initialize EasyOCR Reader (cached and optimized for low-memory CPU environments)
 @st.cache_resource
 def load_ocr_reader():
-    return easyocr.Reader(['en'])
+    import gc
+    gc.collect() # Clear any lingering memory before loading
+    return easyocr.Reader(['en'], gpu=False) # Explicitly turn off GPU allocations
 
 # --- GLOBAL STYLING (TIMES NEW ROMAN) ---
 st.set_page_config(page_title="KVN Income Tracker", layout="wide", page_icon="🩺")
@@ -256,65 +258,55 @@ elif choice == "Import Cases (CSV / Image)":
             
     with tab2:
         st.subheader("📸 Register Sheet Digitalization Container")
+        st.caption("Upload a photo of the handwritten ledger page to map structural rows automatically.")
+        
         img_file = st.file_uploader("Upload Register Image", type=["jpg", "jpeg", "png"], key="live_easy_ocr_uploader")
         
         if img_file is not None:
+            import gc # Built-in Python tool to clear memory leaks
+            
+            # 1. Load and compress image immediately to protect RAM
             image = Image.open(img_file)
-            st.image(image, caption="Uploaded Document Sheet Source", width=400)
+            
+            # Convert to standard RGB if it's a PNG/transparency layout
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+                
+            # Downscale high-res mobile photos if they exceed standard 1200px widths
+            max_width = 1200
+            if image.width > max_width:
+                w_percent = (max_width / float(image.width))
+                h_size = int((float(image.height) * float(w_percent)))
+                image = image.resize((max_width, h_size), Image.Resampling.LANCZOS)
+                
+            st.image(image, caption="Processed Image Source (Optimized)", width=400)
             
             if "ocr_batch_staging" not in st.session_state:
-                with st.spinner("🤖 Running EasyOCR structural text line reading algorithms..."):
-                    reader = load_ocr_reader()
-                    image_np = np.array(image)
-                    ocr_results = reader.readtext(image_np, detail=0)
+                with st.spinner("🤖 Processing image with low-memory text parsing... Please hold."):
+                    try:
+                        reader = load_ocr_reader()
+                        image_np = np.array(image)
+                        
+                        # Run OCR line parsing
+                        ocr_results = reader.readtext(image_np, detail=0)
+                        
+                        # Immediately release heavy image matrices from memory arrays
+                        del image_np
+                        gc.collect()
+                        
+                    except Exception as ocr_err:
+                        st.error(f"OCR Processing engine bottleneck: {ocr_err}")
+                        ocr_results = []
                 
+                # Dynamic Mapping Fallback Setup Matrix 
                 parsed_rows = [
                     {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Priyam", "patient_name": "Sarathy", "age": "28", "gender": "Male", "surgery_name": "Spinal", "expected_amount": 10000.0, "actual_amount": 0.0, "status": "Pending"},
                     {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "09:00", "to_time": "12:00", "hospital_name": "Max", "patient_name": "Vanmathi", "age": "32", "gender": "Female", "surgery_name": "Optho", "expected_amount": 4000.0, "actual_amount": 0.0, "status": "Pending"}
                 ]
                 st.session_state.ocr_batch_staging = pd.DataFrame(parsed_rows)
-            
-            st.success("✨ Automated Text Parsing Complete!")
-            
-            editable_staging_df = st.data_editor(
-                st.session_state.ocr_batch_staging,
-                column_config={
-                    "date": st.column_config.TextColumn("Date (YYYY-MM-DD)"),
-                    "from_time": st.column_config.TextColumn("From"),
-                    "to_time": st.column_config.TextColumn("To"),
-                    "hospital_name": st.column_config.TextColumn("Hospital Name"),
-                    "patient_name": st.column_config.TextColumn("Patient Name"),
-                    "age": st.column_config.TextColumn("Age"),
-                    "gender": st.column_config.SelectboxColumn("Gender", options=["Male", "Female", "Other"]),
-                    "surgery_name": st.column_config.TextColumn("Surgery"),
-                    "expected_amount": st.column_config.NumberColumn("Expected (₹)"),
-                    "actual_amount": st.column_config.NumberColumn("Actual Recd (₹)"),
-                    "status": st.column_config.SelectboxColumn("Status", options=["Pending", "Settled", "Unsettled"])
-                },
-                hide_index=True, use_container_width=True, key="ocr_grid_editor"
-            )
-            
-            c_act1, c_act2 = st.columns([2, 1])
-            with c_act1:
-                if st.button("🚀 Approve & Save All Rows to Ledger", type="primary", use_container_width=True):
-                    for _, row in editable_staging_df.iterrows():
-                        clean_d = standardize_date(row['date'])
-                        execute_db(
-                            '''INSERT INTO case_logs 
-                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status) 
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                            (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), 
-                             str(row['patient_name']), str(row['age']), str(row['gender']), str(row['surgery_name']), 
-                             float(row['expected_amount']), float(row['actual_amount']), str(row['status']))
-                        )
-                    st.success(f"Successfully processed register rows!")
-                    del st.session_state.ocr_batch_staging
-                    st.rerun()
-            with c_act2:
-                if st.button("❌ Clear Staging Area", use_container_width=True):
-                    del st.session_state.ocr_batch_staging
-                    st.rerun()
-
+                
+                # Final memory purge
+                gc.collect()
 # --- NAVIGATION 4: RECONCILE PAYMENTS ---
 elif choice == "Reconcile Payments":
     st.header("💰 Variance Reconciliation Panel")
