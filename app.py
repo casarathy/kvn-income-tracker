@@ -116,10 +116,11 @@ choice = st.sidebar.selectbox("Navigation Menu", menu)
 
 # --- NAVIGATION 1: DASHBOARD & SUMMARY ---
 # --- NAVIGATION 1: DASHBOARD & SUMMARY ---
+# --- NAVIGATION 1: DASHBOARD & SUMMARY ---
 if choice == "Dashboard & Summary":
     st.header("📊 Advanced Financial Analytics Panel")
     
-    # 1. MODE SELECTION FOR HIGHER VISIBILITY ANALYTICS
+    # VIEW MODE WORKSPACE SELECTOR
     view_mode = st.radio(
         "Choose Analytics Workspace", 
         ["Single Month Breakdown", "Multi-Month Aggregated View", "Cross-Month Comparative Audit"], 
@@ -135,7 +136,7 @@ if choice == "Dashboard & Summary":
     if view_mode == "Single Month Breakdown":
         selected_month = st.selectbox("Select Target Month for Analysis", available_months, index=0, key="single_m")
         
-        # Pull transactional subsets
+        # Pull raw transactional data
         raw_cases = run_query("SELECT * FROM case_logs WHERE strftime('%Y-%m', date) = ? ORDER BY date DESC", (selected_month,))
         income_df = run_query("SELECT * FROM fixed_income WHERE month_year = ?", (selected_month,))
         
@@ -152,7 +153,7 @@ if choice == "Dashboard & Summary":
             
         total_net_income = total_actual + salary + other
 
-        # Core Metrics Rendering Block
+        # Core Financial Metrics Cards
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Expected Fees (Cases)", f"₹{total_expected:,.2f}")
         col2.metric("Collected Fees (Cases)", f"₹{total_actual:,.2f}")
@@ -161,17 +162,64 @@ if choice == "Dashboard & Summary":
         
         st.markdown("---")
         
-        # NEW SECTION: REVENUE BREAKDOWN BLOCK BY PIPELINE SOURCE
-        st.subheader("📑 Income Stream Breakdown Matrix")
+        # 1. NEW CLEAN & CALM STATUS BOARD (AGGREGATED BY HOSPITAL)
+        st.subheader("⚡ Quick Status Board")
+        if not raw_cases.empty and pending_receivables > 0:
+            pending_cases = raw_cases[raw_cases['status'].isin(['Pending', 'Unsettled'])]
+            if not pending_cases.empty:
+                # Group by hospital name to show a clean aggregate summary loop
+                hosp_summary = pending_cases.groupby('hospital_name').agg(
+                    total_owed=('pending_balance', 'sum'),
+                    case_count=('id', 'count')
+                ).reset_index()
+                
+                st.caption("🔴 Outstanding Receivables by Facility:")
+                for _, row in hosp_summary.iterrows():
+                    st.markdown(f"<span class='pending-red'>• 🏥 **{row['hospital_name']}** — Total Owed: **₹{row['total_owed']:,.2f}** *(across {row['case_count']} pending cases)*</span>", unsafe_allow_html=True)
+        else:
+            st.success("🎉 All accounts clear! No outstanding items left un-reconciled.")
+
+        st.markdown("---")
         
+        # 2. INSTANT "YES" QUICK RECONCILE CHECKLIST ON THE DASHBOARD
+        st.subheader("🏁 Quick Reconcile Checklist")
+        st.caption("Did you receive the exact expected amount? Toggle 'Yes' below to settle instantly.")
+        if not raw_cases.empty:
+            only_pure_pending = raw_cases[raw_cases['status'] == 'Pending'].copy()
+            if not only_pure_pending.empty:
+                only_pure_pending['Received Full Amount?'] = False
+                
+                # Render editable checklist data grid layout
+                edited_checklist = st.data_editor(
+                    only_pure_pending[['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'Received Full Amount?']],
+                    hide_index=True, 
+                    disabled=['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount'], 
+                    use_container_width=True, 
+                    key="quick_dash_settler"
+                )
+                
+                # Check if any row was toggled to "Yes"
+                if edited_checklist['Received Full Amount?'].any():
+                    for _, row in edited_checklist[edited_checklist['Received Full Amount?'] == True].iterrows():
+                        # Instantly update database setting actual_amount equal to expected_amount
+                        execute_db(
+                            "UPDATE case_logs SET actual_amount = expected_amount, status = 'Settled' WHERE id = ?", 
+                            (int(row['id']),)
+                        )
+                    st.rerun()
+            else:
+                st.info("No un-reconciled cases left matching standard parameters.")
+        else:
+            st.info("No logged transactions recorded.")
+
+        st.markdown("---")
+        
+        # 3. INCOME STREAM BREAKDOWN TABLE
+        st.subheader("📑 Income Stream Breakdown Matrix")
         breakdown_data = []
         if salary > 0:
             breakdown_data.append({"Income Stream / Source": "Fixed Professional Retainer / Salary", "Type": "Fixed Income", "Collected Revenue": salary})
-        if other > 0:
-            breakdown_data.append({"Income Stream / Source": "Other Capital / Auxiliary Streams", "Type": "Fixed Income", "Collected Revenue": other})
-            
         if not raw_cases.empty:
-            # Group surgical payouts dynamically by individual hospitals
             hosp_groups = raw_cases.groupby('hospital_name')['actual_amount'].sum().reset_index()
             for _, h_row in hosp_groups.iterrows():
                 if h_row['actual_amount'] > 0:
@@ -180,6 +228,8 @@ if choice == "Dashboard & Summary":
                         "Type": "Variable Surgical Cases",
                         "Collected Revenue": h_row['actual_amount']
                     })
+        if other > 0:
+            breakdown_data.append({"Income Stream / Source": "Other Capital / Auxiliary Streams", "Type": "Fixed Income", "Collected Revenue": other})
                     
         if breakdown_data:
             df_breakdown = pd.DataFrame(breakdown_data)
@@ -188,16 +238,10 @@ if choice == "Dashboard & Summary":
         else:
             st.info("No verified streams registered for this specific timeframe range.")
 
-        # Status boards and administrative tables remain integrated underneath
         st.markdown("---")
-        st.subheader("⚡ Quick Status Board")
+        st.subheader("📋 Monthly Table Summary")
         if not raw_cases.empty:
-            pending_rows = raw_cases[raw_cases['status'].isin(['Pending', 'Unsettled'])]
-            if not pending_rows.empty:
-                for idx, r in pending_rows.iterrows():
-                    st.markdown(f"<span class='pending-red'>• [{r['date']}] {r['hospital_name']} - Patient: {r['patient_name']} ({r['age']}/{r['gender']}) | Owed: ₹{r['expected_amount'] - r['actual_amount']:,.2f}</span>", unsafe_allow_html=True)
-            else:
-                st.success("🎉 All accounts clear! No outstanding items left un-reconciled.")
+            st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
         else:
             st.info("No cases logged for this targeted analysis matrix.")
 
@@ -211,7 +255,6 @@ if choice == "Dashboard & Summary":
         if not selected_months:
             st.warning("Please select at least one month from the configuration filter.")
         else:
-            # Aggregate dynamic parameters across multiple periods securely
             placeholders = ",".join("?" for _ in selected_months)
             agg_cases = run_query(f"SELECT * FROM case_logs WHERE strftime('%Y-%m', date) IN ({placeholders})", selected_months)
             agg_income = run_query(f"SELECT * FROM fixed_income WHERE month_year IN ({placeholders})", selected_months)
@@ -229,8 +272,6 @@ if choice == "Dashboard & Summary":
                 
             grand_net = tot_act + sum_salary + sum_other
             
-            # Cumulative Metric Summary Panel Blocks
-            st.markdown("#### Consolidated Totals for Selection Loop")
             mc1, mc2, mc3, mc4 = st.columns(4)
             mc1.metric("Combined Case Volume (Expected)", f"₹{tot_exp:,.2f}")
             mc2.metric("Combined Case Payouts (Collected)", f"₹{tot_act:,.2f}")
@@ -243,30 +284,28 @@ if choice == "Dashboard & Summary":
             agg_breakdown = []
             if sum_salary > 0:
                 agg_breakdown.append({"Income Source Channel": "Professional Retainer Retainers (Combined)", "Collected Amount": sum_salary})
-            if sum_other > 0:
-                agg_breakdown.append({"Income Source Channel": "Auxiliary Capital Inflows (Combined)", "Collected Amount": sum_other})
-                
             if not agg_cases.empty:
                 h_agg = agg_cases.groupby('hospital_name')['actual_amount'].sum().reset_index()
                 for _, h_row in h_agg.iterrows():
                     if h_row['actual_amount'] > 0:
                         agg_breakdown.append({"Income Source Channel": f"Hospital Stream Summary: {h_row['hospital_name']}", "Collected Amount": h_row['actual_amount']})
+            if sum_other > 0:
+                agg_breakdown.append({"Income Source Channel": "Auxiliary Capital Inflows (Combined)", "Collected Amount": sum_other})
                         
             if agg_breakdown:
                 df_agg_b = pd.DataFrame(agg_breakdown)
                 df_agg_b['% of Aggregate Net Pool'] = (df_agg_b['Collected Amount'] / grand_net * 100).round(2).astype(str) + ' %'
                 st.dataframe(df_agg_b, use_container_width=True, hide_index=True)
-            else:
-                st.info("No transactional volume maps inside selected filter subsets.")
 
     # ==========================================
-    # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT
-    # ==========================================
-    # ==========================================
-    # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT (P&L REVENUE STATEMENT FORMAT)
+    # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT (P&L ACCOUNTING METHOD ARCHITECTURE)
     # ==========================================
     elif view_mode == "Cross-Month Comparative Audit":
         st.subheader("📋 Comparative Revenue Statement")
+        
+        # NEW ACCOUNTING METRIC METHOD TOGGLE
+        accounting_basis = st.radio("Accounting Recognition Basis Method", ["Cash Basis (Realized Inflows Only)", "Accrual Basis (Total Earned Inflows)"], horizontal=True)
+        val_column = 'actual_amount' if "Cash Basis" in accounting_basis else 'expected_amount'
         
         comp_col1, comp_col2 = st.columns(2)
         with comp_col1:
@@ -278,82 +317,84 @@ if choice == "Dashboard & Summary":
         if month_a == month_b:
             st.info("Please select two distinct months to generate a comparative statement.")
         else:
-            # 1. Fetch complete data profiles including hospital identifiers for both terms
-            cases_a = run_query("SELECT hospital_name, actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_a,))
+            # Query complete data records based on the selection parameters
+            cases_a = run_query(f"SELECT hospital_name, {val_column} FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_a,))
             inc_a = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_a,))
             
-            cases_b = run_query("SELECT hospital_name, actual_amount FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_b,))
-            inc_b = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_b,))
+            cases_b = run_query(f"SELECT hospital_name, {val_column} FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_b,))
+            inc_b = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_b регулярно,))
             
-            # Extract basic fixed revenue data values
             sal_a = inc_a['salary'].sum() if not inc_a.empty else 0.0
             oth_a = inc_a['other_income'].sum() if not inc_a.empty else 0.0
             
             sal_b = inc_b['salary'].sum() if not inc_b.empty else 0.0
             oth_b = inc_b['other_income'].sum() if not inc_b.empty else 0.0
             
-            # Map itemized hospital earnings tables securely
-            hosp_a_series = cases_a.groupby('hospital_name')['actual_amount'].sum() if not cases_a.empty else pd.Series(dtype=float)
-            hosp_b_series = cases_b.groupby('hospital_name')['actual_amount'].sum() if not cases_b.empty else pd.Series(dtype=float)
+            hosp_a_series = cases_a.groupby('hospital_name')[val_column].sum() if not cases_a.empty else pd.Series(dtype=float)
+            hosp_b_series = cases_b.groupby('hospital_name')[val_column].sum() if not cases_b.empty else pd.Series(dtype=float)
             all_hospitals = sorted(list(set(hosp_a_series.index).union(set(hosp_b_series.index))))
             
-            # 2. Build a structured presentation ledger layout matching a P&L document flow
+            # ST_BUILD: LINE ARRAYS ORDER STRUCTURED ACCORDING TO ACCOUNTING LAYOUT RULES
             pl_rows = []
             
-            # --- SECTION I: FIXED PROFESSIONAL INFLOWS ---
-            pl_rows.append({"Revenue Stream Component": "PART I: FIXED PROFESSIONAL REVENUE", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Absolute Increase / (Decrease)": None})
-            pl_rows.append({"Revenue Stream Component": "  • Base Professional Retainer / Salary", f"Period A ({month_a})": sal_a, f"Period B ({month_b})": sal_b, "Absolute Increase / (Decrease)": sal_a - sal_b})
-            pl_rows.append({"Revenue Stream Component": "  • Other Capital / Auxiliary Income", f"Period A ({month_a})": oth_a, f"Period B ({month_b})": oth_b, "Absolute Increase / (Decrease)": oth_a - oth_b})
+            # LINE ITEM 1: Professional Fee Line
+            pl_rows.append({
+                "Revenue Line Component Item": "Base Professional Retainer / Salary", 
+                f"Period A ({month_a})": sal_a, 
+                f"Period B ({month_b})": sal_b, 
+                "Net Absolute Shift": sal_a - sal_b
+            })
             
-            # --- SECTION II: VARIABLE SURGICAL INFLOWS ---
-            pl_rows.append({"Revenue Stream Component": "PART II: VARIABLE SURGICAL CASE FEES", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Absolute Increase / (Decrease)": None})
-            
+            # SUCCEEDING LINE ITEMS: Hospital surgical parameters
             tot_hosp_a = 0.0
             tot_hosp_b = 0.0
-            
             for h_name in all_hospitals:
                 val_a = hosp_a_series.get(h_name, 0.0)
                 val_b = hosp_b_series.get(h_name, 0.0)
                 tot_hosp_a += val_a
                 tot_hosp_b += val_b
                 pl_rows.append({
-                    "Revenue Stream Component": f"  • {h_name} Hospital",
+                    "Revenue Line Component Item": f"Hospital Fee Inflow: {h_name}",
                     f"Period A ({month_a})": val_a,
                     f"Period B ({month_b})": val_b,
-                    "Absolute Increase / (Decrease)": val_a - val_b
+                    "Net Absolute Shift": val_a - val_b
                 })
                 
-            # Add section sub-totals if hospital lists are active
-            pl_rows.append({"Revenue Stream Component": "TOTAL SURGICAL PRACTICE INFLOWS", f"Period A ({month_a})": tot_hosp_a, f"Period B ({month_b})": tot_hosp_b, "Absolute Increase / (Decrease)": tot_hosp_a - tot_hosp_b})
+            # LAST LINE ITEM: Other Auxiliary Incomes
+            pl_rows.append({
+                "Revenue Line Component Item": "Other Capital / Auxiliary Income", 
+                f"Period A ({month_a})": oth_a, 
+                f"Period B ({month_b})": oth_b, 
+                "Net Absolute Shift": oth_a - oth_b
+            })
             
-            # --- SECTION III: TOTAL REVENUE SUMMARY ---
+            # GRAND TOTAL BLOCK
             grand_a = sal_a + oth_a + tot_hosp_a
             grand_b = sal_b + oth_b + tot_hosp_b
             
-            pl_rows.append({"Revenue Stream Component": "────────────────────────────────────────", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Absolute Increase / (Decrease)": None})
-            pl_rows.append({"Revenue Stream Component": "TOTAL COMBINED NET OPERATING REVENUE", f"Period A ({month_a})": grand_a, f"Period B ({month_b})": grand_b, "Absolute Increase / (Decrease)": grand_a - grand_b})
+            pl_rows.append({"Revenue Line Component Item": "────────────────────────────────────────", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Net Absolute Shift": None})
+            pl_rows.append({
+                "Revenue Line Component Item": "TOTAL REPORTABLE OPERATING PRACTICE REVENUE", 
+                f"Period A ({month_a})": grand_a, 
+                f"Period B ({month_b})": grand_b, 
+                "Net Absolute Shift": grand_a - grand_b
+            })
             
-            # Convert raw rows to dataframes and apply custom visibility formatting
             df_pl = pd.DataFrame(pl_rows)
             
-            # Custom currency cell formatting function that safely skips empty formatting header rows
             def format_currency_statement(val):
-                if pd.isna(val) or val is None:
-                    return ""
-                if val < 0:
-                    return f"₹({abs(val):,.2f})"
+                if pd.isna(val) or val is None: return ""
+                if val < 0: return f"₹({abs(val):,.2f})"
                 return f"₹{val:,.2f}"
 
             formatted_df = df_pl.style.format({
                 f"Period A ({month_a})": format_currency_statement,
                 f"Period B ({month_b})": format_currency_statement,
-                "Absolute Increase / (Decrease)": format_currency_statement
+                "Net Absolute Shift": format_currency_statement
             })
             
-            # Display clean layout grid
             st.markdown("---")
-            st.dataframe(formatted_df, use_container_width=True, hide_index=True)                
-# --- NAVIGATION 2: LOG NEW CASE ---
+            st.dataframe(formatted_df, use_container_width=True, hide_index=True)# --- NAVIGATION 2: LOG NEW CASE ---
 elif choice == "Log New Case":
     st.header("📝 Log Daily Surgery Details")
     with st.form("case_form", clear_on_submit=True):
