@@ -27,7 +27,11 @@ def init_db():
             surgery_name TEXT,
             expected_amount REAL,
             actual_amount REAL,
-            status TEXT
+            status TEXT,
+            age TEXT DEFAULT '',
+            gender TEXT DEFAULT '',
+            risk_profile TEXT DEFAULT 'Low',
+            surgery_category TEXT DEFAULT 'General'
         )
     ''')
     c.execute('''
@@ -37,9 +41,18 @@ def init_db():
             other_income REAL
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tds_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month_year TEXT,
+            source_type TEXT,
+            source_name TEXT,
+            tds_amount REAL
+        )
+    ''')
     
     # --- AUTOMATIC MIGRATION LOGIC ---
-    # This safely adds age and gender to your existing cloud database without losing data
+    # This safely adds fields to your existing database without losing data
     c.execute("PRAGMA table_info(case_logs)")
     columns = [col[1] for col in c.fetchall()]
     
@@ -47,6 +60,10 @@ def init_db():
         c.execute("ALTER TABLE case_logs ADD COLUMN age TEXT DEFAULT ''")
     if "gender" not in columns:
         c.execute("ALTER TABLE case_logs ADD COLUMN gender TEXT DEFAULT ''")
+    if "risk_profile" not in columns:
+        c.execute("ALTER TABLE case_logs ADD COLUMN risk_profile TEXT DEFAULT 'Low'")
+    if "surgery_category" not in columns:
+        c.execute("ALTER TABLE case_logs ADD COLUMN surgery_category TEXT DEFAULT 'General'")
         
     conn.commit()
     conn.close()
@@ -111,7 +128,7 @@ st.markdown("""
 
 st.title("🩺 KVN Income Tracker")
 
-menu = ["Dashboard & Summary", "Log New Case", "Import Cases (CSV / Image)", "Reconcile Payments", "Manage Logs (Edit/Delete)", "Update Fixed Income", "Export Data (CSV)"]
+menu = ["Dashboard & Summary", "Log New Case", "Import Cases (CSV / Image)", "Reconcile Payments", "Manage Logs (Edit/Delete)", "Update Fixed Income & TDS", "Export Data (CSV)"]
 choice = st.sidebar.selectbox("Navigation Menu", menu)
 
 # --- NAVIGATION 1: DASHBOARD & SUMMARY ---
@@ -140,6 +157,10 @@ if choice == "Dashboard & Summary":
         raw_cases = run_query("SELECT * FROM case_logs WHERE strftime('%Y-%m', date) = ? ORDER BY date DESC", (selected_month,))
         income_df = run_query("SELECT * FROM fixed_income WHERE month_year = ?", (selected_month,))
         
+        # Pull TDS logs for the month
+        tds_logs_df = run_query("SELECT * FROM tds_logs WHERE month_year = ?", (selected_month,))
+        total_tds = tds_logs_df['tds_amount'].sum() if not tds_logs_df.empty else 0.0
+        
         salary = income_df['salary'].iloc[0] if not income_df.empty else 0.0
         other = income_df['other_income'].iloc[0] if not income_df.empty else 0.0
         
@@ -151,14 +172,15 @@ if choice == "Dashboard & Summary":
         else:
             total_expected, total_actual, pending_receivables = 0.0, 0.0, 0.0
             
-        total_net_income = total_actual + salary + other
+        total_net_income = (total_actual + salary + other) - total_tds
 
         # Core Financial Metrics Cards
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Expected Fees (Cases)", f"₹{total_expected:,.2f}")
         col2.metric("Collected Fees (Cases)", f"₹{total_actual:,.2f}")
         col3.metric("True Pending Receivables", f"₹{pending_receivables:,.2f}")
-        col4.metric("Total Net Monthly Income", f"₹{total_net_income:,.2f}")
+        col4.metric("Total TDS Deductions", f"₹{total_tds:,.2f}")
+        col5.metric("Net Income (After TDS)", f"₹{total_net_income:,.2f}")
         
         st.markdown("---")
         
@@ -191,9 +213,9 @@ if choice == "Dashboard & Summary":
                 
                 # Render editable checklist data grid layout
                 edited_checklist = st.data_editor(
-                    only_pure_pending[['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'Received Full Amount?']],
+                    only_pure_pending[['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'surgery_category', 'surgery_name', 'expected_amount', 'Received Full Amount?']],
                     hide_index=True, 
-                    disabled=['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount'], 
+                    disabled=['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'surgery_category', 'surgery_name', 'expected_amount'], 
                     use_container_width=True, 
                     key="quick_dash_settler"
                 )
@@ -233,15 +255,46 @@ if choice == "Dashboard & Summary":
                     
         if breakdown_data:
             df_breakdown = pd.DataFrame(breakdown_data)
-            df_breakdown['Contribution %'] = (df_breakdown['Collected Revenue'] / total_net_income * 100).round(2).astype(str) + ' %'
+            # Use total_net_income + total_tds as the total gross income to get correct gross contribution %
+            total_gross = total_actual + salary + other
+            if total_gross > 0:
+                df_breakdown['Contribution %'] = (df_breakdown['Collected Revenue'] / total_gross * 100).round(2).astype(str) + ' %'
+            else:
+                df_breakdown['Contribution %'] = '0.0 %'
             st.dataframe(df_breakdown, use_container_width=True, hide_index=True)
         else:
             st.info("No verified streams registered for this specific timeframe range.")
 
         st.markdown("---")
+        
+        # 4. TDS DEDUCTIONS BREAKDOWN Table
+        st.subheader("📊 TDS Deductions Breakdown")
+        if not tds_logs_df.empty:
+            st.dataframe(tds_logs_df[['source_type', 'source_name', 'tds_amount']], use_container_width=True, hide_index=True)
+        else:
+            st.info("No TDS deductions logged for this target month.")
+
+        st.markdown("---")
+        
+        # 5. Surgery Classifications Analytics
+        st.subheader("📈 Case Classifications Analytics")
+        if not raw_cases.empty:
+            sc_col1, sc_col2 = st.columns(2)
+            with sc_col1:
+                st.caption("Risk Profile Distribution")
+                risk_counts = raw_cases['risk_profile'].value_counts().reset_index()
+                risk_counts.columns = ['Risk Profile', 'Number of Cases']
+                st.dataframe(risk_counts, use_container_width=True, hide_index=True)
+            with sc_col2:
+                st.caption("Surgical Category Distribution")
+                cat_counts = raw_cases['surgery_category'].value_counts().reset_index()
+                cat_counts.columns = ['Surgery Category', 'Number of Cases']
+                st.dataframe(cat_counts, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
         st.subheader("📋 Monthly Table Summary")
         if not raw_cases.empty:
-            st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
+            st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'surgery_category', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
         else:
             st.info("No cases logged for this targeted analysis matrix.")
 
@@ -258,9 +311,11 @@ if choice == "Dashboard & Summary":
             placeholders = ",".join("?" for _ in selected_months)
             agg_cases = run_query(f"SELECT * FROM case_logs WHERE strftime('%Y-%m', date) IN ({placeholders})", selected_months)
             agg_income = run_query(f"SELECT * FROM fixed_income WHERE month_year IN ({placeholders})", selected_months)
+            agg_tds = run_query(f"SELECT * FROM tds_logs WHERE month_year IN ({placeholders})", selected_months)
             
             sum_salary = agg_income['salary'].sum() if not agg_income.empty else 0.0
             sum_other = agg_income['other_income'].sum() if not agg_income.empty else 0.0
+            sum_tds = agg_tds['tds_amount'].sum() if not agg_tds.empty else 0.0
             
             if not agg_cases.empty:
                 agg_cases['pending_balance'] = agg_cases.apply(lambda r: (r['expected_amount'] - r['actual_amount']) if r['status'] in ['Pending', 'Unsettled'] else 0.0, axis=1)
@@ -270,13 +325,14 @@ if choice == "Dashboard & Summary":
             else:
                 tot_exp, tot_act, tot_pend = 0.0, 0.0, 0.0
                 
-            grand_net = tot_act + sum_salary + sum_other
+            grand_net = (tot_act + sum_salary + sum_other) - sum_tds
             
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("Combined Case Volume (Expected)", f"₹{tot_exp:,.2f}")
-            mc2.metric("Combined Case Payouts (Collected)", f"₹{tot_act:,.2f}")
-            mc3.metric("Aggregate Owed Receivables", f"₹{tot_pend:,.2f}")
-            mc4.metric("True Aggregate Revenue Stream", f"₹{grand_net:,.2f}", delta=f"{len(selected_months)} Months Aggregated")
+            mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+            mc1.metric("Expected Case Fees", f"₹{tot_exp:,.2f}")
+            mc2.metric("Collected Case Fees", f"₹{tot_act:,.2f}")
+            mc3.metric("Owed Receivables", f"₹{tot_pend:,.2f}")
+            mc4.metric("TDS Deductions", f"₹{sum_tds:,.2f}")
+            mc5.metric("Net Income (After TDS)", f"₹{grand_net:,.2f}", delta=f"{len(selected_months)} Months Aggregated")
             
             st.markdown("---")
             st.subheader("📑 Global Pipeline Split (Aggregated over Selection)")
@@ -294,11 +350,15 @@ if choice == "Dashboard & Summary":
                         
             if agg_breakdown:
                 df_agg_b = pd.DataFrame(agg_breakdown)
-                df_agg_b['% of Aggregate Net Pool'] = (df_agg_b['Collected Amount'] / grand_net * 100).round(2).astype(str) + ' %'
+                total_gross_agg = tot_act + sum_salary + sum_other
+                if total_gross_agg > 0:
+                    df_agg_b['% of Aggregate Net Pool'] = (df_agg_b['Collected Amount'] / total_gross_agg * 100).round(2).astype(str) + ' %'
+                else:
+                    df_agg_b['% of Aggregate Net Pool'] = '0.0 %'
                 st.dataframe(df_agg_b, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT (P&L ACCOUNTING METHOD ARCHITECTURE)
+    # WORKSPACE C: CROSS-MONTH COMPARATIVE AUDIT
     # ==========================================
     elif view_mode == "Cross-Month Comparative Audit":
         st.subheader("📋 Comparative Revenue Statement")
@@ -320,15 +380,19 @@ if choice == "Dashboard & Summary":
             # Query complete data records based on the selection parameters
             cases_a = run_query(f"SELECT hospital_name, {val_column} FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_a,))
             inc_a = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_a,))
+            tds_a_df = run_query("SELECT SUM(tds_amount) as total FROM tds_logs WHERE month_year = ?", (month_a,))
             
             cases_b = run_query(f"SELECT hospital_name, {val_column} FROM case_logs WHERE strftime('%Y-%m', date) = ?", (month_b,))
             inc_b = run_query("SELECT salary, other_income FROM fixed_income WHERE month_year = ?", (month_b,))
+            tds_b_df = run_query("SELECT SUM(tds_amount) as total FROM tds_logs WHERE month_year = ?", (month_b,))
             
             sal_a = inc_a['salary'].sum() if not inc_a.empty else 0.0
             oth_a = inc_a['other_income'].sum() if not inc_a.empty else 0.0
+            tds_a = tds_a_df['total'].iloc[0] if not tds_a_df.empty and pd.notna(tds_a_df['total'].iloc[0]) else 0.0
             
             sal_b = inc_b['salary'].sum() if not inc_b.empty else 0.0
             oth_b = inc_b['other_income'].sum() if not inc_b.empty else 0.0
+            tds_b = tds_b_df['total'].iloc[0] if not tds_b_df.empty and pd.notna(tds_b_df['total'].iloc[0]) else 0.0
             
             hosp_a_series = cases_a.groupby('hospital_name')[val_column].sum() if not cases_a.empty else pd.Series(dtype=float)
             hosp_b_series = cases_b.groupby('hospital_name')[val_column].sum() if not cases_b.empty else pd.Series(dtype=float)
@@ -368,13 +432,21 @@ if choice == "Dashboard & Summary":
                 "Net Absolute Shift": oth_a - oth_b
             })
             
+            # TDS Deductions Line Item
+            pl_rows.append({
+                "Revenue Line Component Item": "Less: Total TDS Deductions",
+                f"Period A ({month_a})": -tds_a,
+                f"Period B ({month_b})": -tds_b,
+                "Net Absolute Shift": -(tds_a - tds_b)
+            })
+            
             # GRAND TOTAL BLOCK
-            grand_a = sal_a + oth_a + tot_hosp_a
-            grand_b = sal_b + oth_b + tot_hosp_b
+            grand_a = (sal_a + oth_a + tot_hosp_a) - tds_a
+            grand_b = (sal_b + oth_b + tot_hosp_b) - tds_b
             
             pl_rows.append({"Revenue Line Component Item": "────────────────────────────────────────", f"Period A ({month_a})": None, f"Period B ({month_b})": None, "Net Absolute Shift": None})
             pl_rows.append({
-                "Revenue Line Component Item": "TOTAL REPORTABLE OPERATING PRACTICE REVENUE", 
+                "Revenue Line Component Item": "TOTAL REPORTABLE OPERATING PRACTICE REVENUE (NET)", 
                 f"Period A ({month_a})": grand_a, 
                 f"Period B ({month_b})": grand_b, 
                 "Net Absolute Shift": grand_a - grand_b
@@ -386,7 +458,7 @@ if choice == "Dashboard & Summary":
                 if pd.isna(val) or val is None: return ""
                 if val < 0: return f"₹({abs(val):,.2f})"
                 return f"₹{val:,.2f}"
-
+ 
             formatted_df = df_pl.style.format({
                 f"Period A ({month_a})": format_currency_statement,
                 f"Period B ({month_b})": format_currency_statement,
@@ -394,7 +466,9 @@ if choice == "Dashboard & Summary":
             })
             
             st.markdown("---")
-            st.dataframe(formatted_df, use_container_width=True, hide_index=True)# --- NAVIGATION 2: LOG NEW CASE ---
+            st.dataframe(formatted_df, use_container_width=True, hide_index=True)
+
+# --- NAVIGATION 2: LOG NEW CASE ---
 elif choice == "Log New Case":
     st.header("📝 Log Daily Surgery Details")
     with st.form("case_form", clear_on_submit=True):
@@ -413,13 +487,20 @@ elif choice == "Log New Case":
         surgery = st.text_input("Surgery / Procedure Name")
         expected = st.number_input("Expected Fee Amount", min_value=0.0, step=500.0)
         
+        st.markdown("##### Case Classification")
+        tab_risk, tab_cat = st.tabs(["⚠️ Risk Matrix", "🏷️ Surgery Category"])
+        with tab_risk:
+            risk_profile = st.radio("Risk Classification Level", ["Low", "Medium", "High"], horizontal=True)
+        with tab_cat:
+            surgery_category = st.text_input("Surgery Category (e.g. Ortho, Cardio, General)", value="General")
+        
         if st.form_submit_button("Save Case Entry"):
             if hospital and patient and surgery:
                 execute_db(
                     '''INSERT INTO case_logs 
-                       (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status) 
-                       VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending')''',
-                    (date.strftime("%Y-%m-%d"), start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), hospital, patient, age, gender, surgery, expected)
+                       (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, surgery_category) 
+                       VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending',?,?)''',
+                    (date.strftime("%Y-%m-%d"), start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), hospital, patient, age, gender, surgery, expected, risk_profile, surgery_category)
                 )
                 st.success("Case saved successfully!")
             else: st.error("Fields cannot be left blank.")
@@ -431,7 +512,7 @@ elif choice == "Import Cases (CSV / Image)":
     
     with tab1:
         st.subheader("CSV Mass Data Entry")
-        template_df = pd.DataFrame(columns=['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount'])
+        template_df = pd.DataFrame(columns=['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'risk_profile', 'surgery_category'])
         csv_temp = template_df.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ Download Blank CSV Import Template", data=csv_temp, file_name="kvn_case_import_template.csv", mime="text/csv")
         
@@ -445,11 +526,13 @@ elif choice == "Import Cases (CSV / Image)":
                         clean_d = standardize_date(row['date'])
                         row_age = str(row['age']) if 'age' in import_df.columns else ""
                         row_gen = str(row['gender']) if 'gender' in import_df.columns else ""
+                        row_risk = str(row['risk_profile']) if 'risk_profile' in import_df.columns else "Low"
+                        row_cat = str(row['surgery_category']) if 'surgery_category' in import_df.columns else "General"
                         execute_db(
                             '''INSERT INTO case_logs 
-                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status) 
-                               VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending')''',
-                            (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']))
+                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, surgery_category) 
+                               VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending',?,?)''',
+                            (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']), row_risk, row_cat)
                         )
                     st.success(f"Successfully processed {len(import_df)} cases into the dashboard!")
                     st.rerun()
@@ -500,8 +583,8 @@ elif choice == "Import Cases (CSV / Image)":
                 
                 # Dynamic Mapping Fallback Setup Matrix 
                 parsed_rows = [
-                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Priyam", "patient_name": "Sarathy", "age": "28", "gender": "Male", "surgery_name": "Spinal", "expected_amount": 10000.0, "actual_amount": 0.0, "status": "Pending"},
-                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "09:00", "to_time": "12:00", "hospital_name": "Max", "patient_name": "Vanmathi", "age": "32", "gender": "Female", "surgery_name": "Optho", "expected_amount": 4000.0, "actual_amount": 0.0, "status": "Pending"}
+                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Priyam", "patient_name": "Sarathy", "age": "28", "gender": "Male", "surgery_name": "Spinal", "expected_amount": 10000.0, "actual_amount": 0.0, "status": "Pending", "risk_profile": "Low", "surgery_category": "General"},
+                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "09:00", "to_time": "12:00", "hospital_name": "Max", "patient_name": "Vanmathi", "age": "32", "gender": "Female", "surgery_name": "Optho", "expected_amount": 4000.0, "actual_amount": 0.0, "status": "Pending", "risk_profile": "Medium", "surgery_category": "Ophthal"}
                 ]
                 st.session_state.ocr_batch_staging = pd.DataFrame(parsed_rows)
                 
@@ -567,6 +650,15 @@ elif choice == "Manage Logs (Edit/Delete)":
             g_idx = g_list.index(record['gender']) if record['gender'] in g_list else 0
             e_gender = st.selectbox("Gender", g_list, index=g_idx)
             
+        # Edit fields for Risk and Category
+        ec3, ec4 = st.columns(2)
+        with ec3:
+            r_list = ["Low", "Medium", "High"]
+            r_idx = r_list.index(record['risk_profile']) if record['risk_profile'] in r_list else 0
+            e_risk = st.selectbox("Risk Level", r_list, index=r_idx)
+        with ec4:
+            e_cat = st.text_input("Surgery Category", record['surgery_category'] if record['surgery_category'] else "General")
+            
         e_surg = st.text_input("Surgery", record['surgery_name'])
         e_exp = st.number_input("Expected Fee", value=float(record['expected_amount']))
         e_act = st.number_input("Actual Settled", value=float(record['actual_amount']))
@@ -577,9 +669,9 @@ elif choice == "Manage Logs (Edit/Delete)":
             if st.button("💾 Save Document Updates", type="primary", use_container_width=True):
                 execute_db(
                     '''UPDATE case_logs SET 
-                       date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, age=?, gender=?, surgery_name=?, expected_amount=?, actual_amount=?, status=? 
+                       date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, age=?, gender=?, surgery_name=?, expected_amount=?, actual_amount=?, status=?, risk_profile=?, surgery_category=? 
                        WHERE id=?''', 
-                    (e_date.strftime("%Y-%m-%d"), e_from.strftime("%H:%M"), e_to.strftime("%H:%M"), e_hosp, e_pat, e_age, e_gender, e_surg, e_exp, e_act, e_status, record_id)
+                    (e_date.strftime("%Y-%m-%d"), e_from.strftime("%H:%M"), e_to.strftime("%H:%M"), e_hosp, e_pat, e_age, e_gender, e_surg, e_exp, e_act, e_status, e_risk, e_cat, record_id)
                 )
                 st.success("Modifications saved.")
                 st.rerun()
@@ -589,18 +681,87 @@ elif choice == "Manage Logs (Edit/Delete)":
                 st.warning("Record purged permanently.")
                 st.rerun()
 
-# --- NAVIGATION 6: UPDATE FIXED INCOME ---
-elif choice == "Update Fixed Income":
-    st.header("💵 Standard Revenue Stream Settings")
+# --- NAVIGATION 6: UPDATE FIXED INCOME & TDS ---
+elif choice == "Update Fixed Income & TDS":
+    st.header("💵 Revenue Streams & TDS Deductions")
     available_months = get_all_available_months()
     curr_month = st.selectbox("Target Valuation Month", available_months, index=0)
-    existing = run_query("SELECT * FROM fixed_income WHERE month_year = ?", (curr_month,))
-    with st.form("inc_form"):
-        s = st.number_input("Base Professional Retainer Salary", value=float(existing['salary'].iloc[0]) if not existing.empty else 0.0)
-        o = st.number_input("Other Capital Streams", value=float(existing['other_income'].iloc[0]) if not existing.empty else 0.0)
-        if st.form_submit_button("Commit Changes"):
-            execute_db("INSERT OR REPLACE INTO fixed_income (month_year, salary, other_income) VALUES (?, ?, ?)", (curr_month, s, o))
-            st.success("Base settings configured.")
+    
+    tab_inc, tab_tds = st.tabs(["Income Streams", "TDS Deductions"])
+    
+    with tab_inc:
+        st.subheader("Base Monthly Revenue Settings")
+        existing = run_query("SELECT * FROM fixed_income WHERE month_year = ?", (curr_month,))
+        with st.form("inc_form"):
+            s = st.number_input("Base Professional Retainer Salary", value=float(existing['salary'].iloc[0]) if not existing.empty else 0.0, step=1000.0)
+            o = st.number_input("Other Capital Streams", value=float(existing['other_income'].iloc[0]) if not existing.empty else 0.0, step=1000.0)
+            if st.form_submit_button("Commit Income Changes"):
+                execute_db("INSERT OR REPLACE INTO fixed_income (month_year, salary, other_income) VALUES (?, ?, ?)", (curr_month, s, o))
+                st.success("Income streams updated successfully.")
+                st.rerun()
+
+    with tab_tds:
+        st.subheader("Log TDS Deductions")
+        st.caption("Log TDS amounts deducted for salary, other income, or specific hospital payments.")
+        
+        # We can fetch existing hospitals from case logs to help select from a dropdown!
+        hosp_df = run_query("SELECT DISTINCT hospital_name FROM case_logs WHERE hospital_name != ''")
+        hosp_list = hosp_df['hospital_name'].tolist() if not hosp_df.empty else []
+        
+        # Form to add a new TDS log
+        with st.form("tds_form"):
+            tds_source_type = st.selectbox("TDS Source Type", ["Hospital", "Salary", "Other Income"])
+            
+            # Source name handling
+            if hosp_list:
+                tds_source_name_sel = st.selectbox("Select Hospital (if applicable)", ["Custom / New Hospital"] + hosp_list)
+            else:
+                tds_source_name_sel = "Custom / New Hospital"
+                
+            tds_source_name_custom = st.text_input("Custom Hospital / Source Name (Only used if 'Custom / New Hospital' selected or for custom entries)")
+            tds_amount = st.number_input("TDS Amount Deducted", min_value=0.0, step=100.0)
+            
+            if st.form_submit_button("Log TDS Amount"):
+                # Determine target source name
+                if tds_source_type == "Salary":
+                    final_source_name = "Salary"
+                elif tds_source_type == "Other Income":
+                    final_source_name = "Other Income"
+                else:
+                    if tds_source_name_sel == "Custom / New Hospital":
+                        final_source_name = tds_source_name_custom.strip()
+                    else:
+                        final_source_name = tds_source_name_sel
+                
+                if final_source_name:
+                    execute_db(
+                        "INSERT INTO tds_logs (month_year, source_type, source_name, tds_amount) VALUES (?, ?, ?, ?)",
+                        (curr_month, tds_source_type, final_source_name, tds_amount)
+                    )
+                    st.success(f"TDS of ₹{tds_amount:,.2f} logged for {final_source_name}!")
+                    st.rerun()
+                else:
+                    st.error("Please enter a valid source or hospital name.")
+                    
+        st.write("---")
+        st.subheader(f"Logged TDS Entries for {curr_month}")
+        month_tds = run_query("SELECT * FROM tds_logs WHERE month_year = ?", (curr_month,))
+        if not month_tds.empty:
+            # Let's show a nice table and allow deleting logs!
+            display_df = month_tds.copy()
+            st.dataframe(display_df[['source_type', 'source_name', 'tds_amount']], use_container_width=True, hide_index=True)
+            
+            # Delete selection
+            del_label_list = [f"{r['source_type']} - {r['source_name']}: ₹{r['tds_amount']:.2f}" for _, r in month_tds.iterrows()]
+            to_delete = st.selectbox("Select TDS entry to delete", del_label_list)
+            if st.button("Delete Selected TDS Entry"):
+                idx = del_label_list.index(to_delete)
+                target_id = int(month_tds.iloc[idx]['id'])
+                execute_db("DELETE FROM tds_logs WHERE id = ?", (target_id,))
+                st.success("TDS entry deleted.")
+                st.rerun()
+        else:
+            st.info("No TDS entries registered for this month yet.")
 
 # --- NAVIGATION 7: EXPORT DATA ENGINE ---
 elif choice == "Export Data (CSV)":
@@ -612,6 +773,7 @@ elif choice == "Export Data (CSV)":
         selected_target = st.selectbox("Target Month", available_months)
         sql_case_query = "SELECT * FROM case_logs WHERE strftime('%Y-%m', date) = ? ORDER BY date ASC"
         sql_income_query = "SELECT * FROM fixed_income WHERE month_year = ?"
+        sql_tds_query = "SELECT * FROM tds_logs WHERE month_year = ?"
         params = (selected_target,)
     else:
         years = set([datetime.now().strftime("%Y")])
@@ -623,13 +785,15 @@ elif choice == "Export Data (CSV)":
         
         sql_case_query = "SELECT * FROM case_logs WHERE substr(date, 1, 4) = ? ORDER BY date ASC"
         sql_income_query = "SELECT * FROM fixed_income WHERE substr(month_year, 1, 4) = ?"
+        sql_tds_query = "SELECT * FROM tds_logs WHERE substr(month_year, 1, 4) = ?"
         params = (str(selected_target),)
         
     st.markdown("---")
     exp_cases = run_query(sql_case_query, params)
     exp_income = run_query(sql_income_query, params)
+    exp_tds = run_query(sql_tds_query, params)
     
-    col_dl1, col_dl2 = st.columns(2)
+    col_dl1, col_dl2, col_dl3 = st.columns(3)
     with col_dl1:
         st.subheader("📋 Case Ledgers")
         if not exp_cases.empty:
@@ -647,3 +811,12 @@ elif choice == "Export Data (CSV)":
             st.download_button(label="⬇️ Download Stream Records (.csv)", data=csv_buffer_income.getvalue(), file_name=f"income_{selected_target}.csv", mime="text/csv", use_container_width=True)
             st.dataframe(exp_income, use_container_width=True, hide_index=True)
         else: st.info("No fixed income metrics logged for this search parameter.")
+
+    with col_dl3:
+        st.subheader("🧾 TDS Deductions")
+        if not exp_tds.empty:
+            csv_buffer_tds = io.StringIO()
+            exp_tds.to_csv(csv_buffer_tds, index=False)
+            st.download_button(label="⬇️ Download TDS Records (.csv)", data=csv_buffer_tds.getvalue(), file_name=f"tds_{selected_target}.csv", mime="text/csv", use_container_width=True)
+            st.dataframe(exp_tds.drop(columns=['id']), use_container_width=True, hide_index=True)
+        else: st.info("No TDS deductions logged for this search parameter.")
