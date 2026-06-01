@@ -31,7 +31,7 @@ def init_db():
             age TEXT DEFAULT '',
             gender TEXT DEFAULT '',
             risk_profile TEXT DEFAULT 'Low',
-            surgery_category TEXT DEFAULT 'General'
+            anaesthesia_type TEXT DEFAULT 'General'
         )
     ''')
     c.execute('''
@@ -62,8 +62,14 @@ def init_db():
         c.execute("ALTER TABLE case_logs ADD COLUMN gender TEXT DEFAULT ''")
     if "risk_profile" not in columns:
         c.execute("ALTER TABLE case_logs ADD COLUMN risk_profile TEXT DEFAULT 'Low'")
-    if "surgery_category" not in columns:
-        c.execute("ALTER TABLE case_logs ADD COLUMN surgery_category TEXT DEFAULT 'General'")
+    if "anaesthesia_type" not in columns:
+        c.execute("ALTER TABLE case_logs ADD COLUMN anaesthesia_type TEXT DEFAULT 'General'")
+        # Migrate old surgery_category values if they exist in the DB
+        if "surgery_category" in columns:
+            try:
+                c.execute("UPDATE case_logs SET anaesthesia_type = surgery_category")
+            except Exception:
+                pass
         
     conn.commit()
     conn.close()
@@ -213,9 +219,9 @@ if choice == "Dashboard & Summary":
                 
                 # Render editable checklist data grid layout
                 edited_checklist = st.data_editor(
-                    only_pure_pending[['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'surgery_category', 'surgery_name', 'expected_amount', 'Received Full Amount?']],
+                    only_pure_pending[['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'anaesthesia_type', 'surgery_name', 'expected_amount', 'Received Full Amount?']],
                     hide_index=True, 
-                    disabled=['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'surgery_category', 'surgery_name', 'expected_amount'], 
+                    disabled=['id', 'date', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'anaesthesia_type', 'surgery_name', 'expected_amount'], 
                     use_container_width=True, 
                     key="quick_dash_settler"
                 )
@@ -286,15 +292,15 @@ if choice == "Dashboard & Summary":
                 risk_counts.columns = ['Risk Profile', 'Number of Cases']
                 st.dataframe(risk_counts, use_container_width=True, hide_index=True)
             with sc_col2:
-                st.caption("Surgical Category Distribution")
-                cat_counts = raw_cases['surgery_category'].value_counts().reset_index()
-                cat_counts.columns = ['Surgery Category', 'Number of Cases']
+                st.caption("Anaesthesia Type Distribution")
+                cat_counts = raw_cases['anaesthesia_type'].value_counts().reset_index()
+                cat_counts.columns = ['Anaesthesia Type', 'Number of Cases']
                 st.dataframe(cat_counts, use_container_width=True, hide_index=True)
 
         st.markdown("---")
         st.subheader("📋 Monthly Table Summary")
         if not raw_cases.empty:
-            st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'surgery_category', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
+            st.dataframe(raw_cases[['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'risk_profile', 'anaesthesia_type', 'surgery_name', 'expected_amount', 'actual_amount', 'status']], use_container_width=True, hide_index=True)
         else:
             st.info("No cases logged for this targeted analysis matrix.")
 
@@ -488,19 +494,19 @@ elif choice == "Log New Case":
         expected = st.number_input("Expected Fee Amount", min_value=0.0, step=500.0)
         
         st.markdown("##### Case Classification")
-        tab_risk, tab_cat = st.tabs(["⚠️ Risk Matrix", "🏷️ Surgery Category"])
+        tab_risk, tab_cat = st.tabs(["⚠️ Risk Matrix", "🏷️ Anaesthesia Type"])
         with tab_risk:
             risk_profile = st.radio("Risk Classification Level", ["Low", "Medium", "High"], horizontal=True)
         with tab_cat:
-            surgery_category = st.text_input("Surgery Category (e.g. Ortho, Cardio, General)", value="General")
+            anaesthesia_type = st.text_input("Anaesthesia Type (e.g. General, Spinal, Local, MAC)", value="General")
         
         if st.form_submit_button("Save Case Entry"):
             if hospital and patient and surgery:
                 execute_db(
                     '''INSERT INTO case_logs 
-                       (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, surgery_category) 
+                       (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, anaesthesia_type) 
                        VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending',?,?)''',
-                    (date.strftime("%Y-%m-%d"), start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), hospital, patient, age, gender, surgery, expected, risk_profile, surgery_category)
+                    (date.strftime("%Y-%m-%d"), start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), hospital, patient, age, gender, surgery, expected, risk_profile, anaesthesia_type)
                 )
                 st.success("Case saved successfully!")
             else: st.error("Fields cannot be left blank.")
@@ -512,7 +518,7 @@ elif choice == "Import Cases (CSV / Image)":
     
     with tab1:
         st.subheader("CSV Mass Data Entry")
-        template_df = pd.DataFrame(columns=['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'risk_profile', 'surgery_category'])
+        template_df = pd.DataFrame(columns=['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'risk_profile', 'anaesthesia_type'])
         csv_temp = template_df.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ Download Blank CSV Import Template", data=csv_temp, file_name="kvn_case_import_template.csv", mime="text/csv")
         
@@ -527,10 +533,18 @@ elif choice == "Import Cases (CSV / Image)":
                         row_age = str(row['age']) if 'age' in import_df.columns else ""
                         row_gen = str(row['gender']) if 'gender' in import_df.columns else ""
                         row_risk = str(row['risk_profile']) if 'risk_profile' in import_df.columns else "Low"
-                        row_cat = str(row['surgery_category']) if 'surgery_category' in import_df.columns else "General"
+                        
+                        # Handle either key for backwards compatibility on custom sheets
+                        if 'anaesthesia_type' in import_df.columns:
+                            row_cat = str(row['anaesthesia_type'])
+                        elif 'surgery_category' in import_df.columns:
+                            row_cat = str(row['surgery_category'])
+                        else:
+                            row_cat = "General"
+                            
                         execute_db(
                             '''INSERT INTO case_logs 
-                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, surgery_category) 
+                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, anaesthesia_type) 
                                VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending',?,?)''',
                             (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']), row_risk, row_cat)
                         )
@@ -583,8 +597,8 @@ elif choice == "Import Cases (CSV / Image)":
                 
                 # Dynamic Mapping Fallback Setup Matrix 
                 parsed_rows = [
-                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Priyam", "patient_name": "Sarathy", "age": "28", "gender": "Male", "surgery_name": "Spinal", "expected_amount": 10000.0, "actual_amount": 0.0, "status": "Pending", "risk_profile": "Low", "surgery_category": "General"},
-                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "09:00", "to_time": "12:00", "hospital_name": "Max", "patient_name": "Vanmathi", "age": "32", "gender": "Female", "surgery_name": "Optho", "expected_amount": 4000.0, "actual_amount": 0.0, "status": "Pending", "risk_profile": "Medium", "surgery_category": "Ophthal"}
+                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "10:00", "to_time": "11:00", "hospital_name": "Priyam", "patient_name": "Sarathy", "age": "28", "gender": "Male", "surgery_name": "Spinal", "expected_amount": 10000.0, "actual_amount": 0.0, "status": "Pending", "risk_profile": "Low", "anaesthesia_type": "General"},
+                    {"date": datetime.now().strftime("%Y-%m-%d"), "from_time": "09:00", "to_time": "12:00", "hospital_name": "Max", "patient_name": "Vanmathi", "age": "32", "gender": "Female", "surgery_name": "Optho", "expected_amount": 4000.0, "actual_amount": 0.0, "status": "Pending", "risk_profile": "Medium", "anaesthesia_type": "Spinal"}
                 ]
                 st.session_state.ocr_batch_staging = pd.DataFrame(parsed_rows)
                 
@@ -657,7 +671,7 @@ elif choice == "Manage Logs (Edit/Delete)":
             r_idx = r_list.index(record['risk_profile']) if record['risk_profile'] in r_list else 0
             e_risk = st.selectbox("Risk Level", r_list, index=r_idx)
         with ec4:
-            e_cat = st.text_input("Surgery Category", record['surgery_category'] if record['surgery_category'] else "General")
+            e_cat = st.text_input("Anaesthesia Type", record['anaesthesia_type'] if record['anaesthesia_type'] else "General")
             
         e_surg = st.text_input("Surgery", record['surgery_name'])
         e_exp = st.number_input("Expected Fee", value=float(record['expected_amount']))
@@ -669,7 +683,7 @@ elif choice == "Manage Logs (Edit/Delete)":
             if st.button("💾 Save Document Updates", type="primary", use_container_width=True):
                 execute_db(
                     '''UPDATE case_logs SET 
-                       date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, age=?, gender=?, surgery_name=?, expected_amount=?, actual_amount=?, status=?, risk_profile=?, surgery_category=? 
+                       date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, age=?, gender=?, surgery_name=?, expected_amount=?, actual_amount=?, status=?, risk_profile=?, anaesthesia_type=? 
                        WHERE id=?''', 
                     (e_date.strftime("%Y-%m-%d"), e_from.strftime("%H:%M"), e_to.strftime("%H:%M"), e_hosp, e_pat, e_age, e_gender, e_surg, e_exp, e_act, e_status, e_risk, e_cat, record_id)
                 )
