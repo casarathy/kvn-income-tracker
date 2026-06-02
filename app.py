@@ -526,9 +526,15 @@ elif choice == "Import Cases (CSV / Image)":
         if uploaded_csv is not None:
             try:
                 import_df = pd.read_csv(uploaded_csv)
+                # Drop rows that are completely empty or missing critical identifiers
+                import_df.dropna(subset=['date', 'patient_name'], how='all', inplace=True)
+                
                 required_cols = ['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount']
                 if all(col in import_df.columns for col in required_cols):
                     for _, row in import_df.iterrows():
+                        # Skip if patient name or date is completely blank (extra safety)
+                        if pd.isna(row['patient_name']) or str(row['patient_name']).strip() == "":
+                            continue
                         clean_d = standardize_date(row['date'])
                         row_age = str(row['age']) if 'age' in import_df.columns else ""
                         row_gen = str(row['gender']) if 'gender' in import_df.columns else ""
@@ -694,6 +700,25 @@ elif choice == "Manage Logs (Edit/Delete)":
                 execute_db("DELETE FROM case_logs WHERE id = ?", (record_id,))
                 st.warning("Record purged permanently.")
                 st.rerun()
+
+    st.markdown("---")
+    st.subheader("🧹 Bulk Delete Records")
+    st.caption("Use this to quickly delete all records for a specific date (useful for undoing a bad CSV import).")
+    
+    unique_dates = run_query("SELECT DISTINCT date FROM case_logs ORDER BY date DESC")
+    if not unique_dates.empty:
+        del_date = st.selectbox("Select Date to clear all its records", unique_dates['date'].tolist())
+        del_count = run_query("SELECT COUNT(*) as cnt FROM case_logs WHERE date = ?", (del_date,)).iloc[0]['cnt']
+        
+        st.warning(f"⚠️ This will permanently delete **{del_count}** cases recorded on **{del_date}**.")
+        
+        # We need a confirm checkbox to avoid accidental bulk deletes
+        confirm_del = st.checkbox(f"I understand, delete all {del_count} cases for {del_date}.")
+        
+        if st.button("🗑️ Bulk Delete Selected Date", type="primary", disabled=not confirm_del):
+            execute_db("DELETE FROM case_logs WHERE date = ?", (del_date,))
+            st.success(f"Successfully deleted all cases for {del_date}.")
+            st.rerun()
 
 # --- NAVIGATION 6: UPDATE FIXED INCOME & TDS ---
 elif choice == "Update Fixed Income & TDS":
