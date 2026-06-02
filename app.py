@@ -322,13 +322,23 @@ if choice == "Dashboard & Summary":
 <table class="premium-table">
     <thead>
         <tr>
-            <th>ID</th><th>Date</th><th>Hospital</th><th>Patient</th><th>Age/Sex</th><th>Risk</th><th>Anaesthesia</th><th>Surgery</th><th>Expected</th>
+            <th>ID</th><th>Date</th><th>Time</th><th>Hospital</th><th>Patient</th><th>Age/Sex</th><th>Risk</th><th>Anaesthesia</th><th>Surgery</th><th>Expected</th>
         </tr>
     </thead>
     <tbody>
 """
+                filtered_df = filtered_df.sort_values(by='id', ascending=True)
                 for _, r in filtered_df.iterrows():
-                    table_html += f"<tr><td>{r['id']}</td><td>{r['date']}</td><td>{r['hospital_name']}</td><td>{r['patient_name']}</td><td>{r['age']} / {r['gender']}</td><td>{r['risk_profile']}</td><td>{r['anaesthesia_type']}</td><td>{r['surgery_name']}</td><td><b>{format_inr(r['expected_amount'])}</b></td></tr>"
+                    try:
+                        formatted_date = datetime.strptime(str(r['date']), "%Y-%m-%d").strftime("%d-%m-%y")
+                    except:
+                        formatted_date = str(r['date'])
+                    
+                    ft = str(r['from_time']) if pd.notna(r['from_time']) and str(r['from_time']).strip() else ""
+                    tt = str(r['to_time']) if pd.notna(r['to_time']) and str(r['to_time']).strip() else ""
+                    time_str = f"{ft}-{tt}" if ft or tt else "-"
+                    
+                    table_html += f"<tr><td>{r['id']}</td><td>{formatted_date}</td><td>{time_str}</td><td>{r['hospital_name']}</td><td>{r['patient_name']}</td><td>{r['age']} / {r['gender']}</td><td>{r['risk_profile']}</td><td>{r['anaesthesia_type']}</td><td>{r['surgery_name']}</td><td><b>{format_inr(r['expected_amount'])}</b></td></tr>"
                 table_html += '</tbody></table>'
                 st.markdown(table_html, unsafe_allow_html=True)
 
