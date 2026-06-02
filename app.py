@@ -290,34 +290,34 @@ if choice == "Dashboard & Summary":
                 
                 table_html = """
 <style>
-.premium-table {"""
-                    width: 100%;
-                    border-collapse: collapse;
-                    font-family: 'Times New Roman', Times, serif;
-                    box-shadow: 0 4px 8px rgba(0,0,0,0.05);
-                    border-radius: 8px;
-                    overflow: hidden;
-                    margin-bottom: 20px;
-                }
+.premium-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Times New Roman', Times, serif;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+}
 .premium-table th {
-                    background-color: #4A90E2;
-                    color: white;
-                    padding: 12px 15px;
-                    text-align: left;
-                    font-size: 1.05rem;
-                    font-weight: bold;
-                }
+    background-color: #4A90E2;
+    color: white;
+    padding: 12px 15px;
+    text-align: left;
+    font-size: 1.05rem;
+    font-weight: bold;
+}
 .premium-table td {
-                    padding: 10px 15px;
-                    border-bottom: 1px solid #e0e0e0;
-                    color: #333;
-                }
+    padding: 10px 15px;
+    border-bottom: 1px solid #e0e0e0;
+    color: #333;
+}
 .premium-table tr:nth-child(even) {
-                    background-color: #f8f9fa;
-                }
+    background-color: #f8f9fa;
+}
 .premium-table tr:hover {
-                    background-color: #e2eeff;
-                }
+    background-color: #e2eeff;
+}
 </style>
 <table class="premium-table">
     <thead>
@@ -326,7 +326,7 @@ if choice == "Dashboard & Summary":
         </tr>
     </thead>
     <tbody>
-                '''
+"""
                 for _, r in filtered_df.iterrows():
                     table_html += f"<tr><td>{r['id']}</td><td>{r['date']}</td><td>{r['hospital_name']}</td><td>{r['patient_name']}</td><td>{r['age']} / {r['gender']}</td><td>{r['risk_profile']}</td><td>{r['anaesthesia_type']}</td><td>{r['surgery_name']}</td><td><b>{format_inr(r['expected_amount'])}</b></td></tr>"
                 table_html += '</tbody></table>'
