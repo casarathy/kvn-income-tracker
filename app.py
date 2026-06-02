@@ -264,33 +264,33 @@ if choice == "Dashboard & Summary":
                 avg_per_hr = total_amt / total_hrs if total_hrs > 0 else 0
 
                 st.markdown(f'''
-                <div style="display: flex; gap: 15px; margin-top: 10px; margin-bottom: 25px; flex-wrap: wrap;">
-                    <div style="flex: 1; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
-                        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Total Cases</h4>
-                        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{total_cases}</h2>
-                    </div>
-                    <div style="flex: 1; background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
-                        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Total Amount</h4>
-                        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{format_inr(total_amt)}</h2>
-                    </div>
-                    <div style="flex: 1; background: linear-gradient(135deg, #ff9966 0%, #ff5e62 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
-                        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Total Hours</h4>
-                        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{total_hrs:.1f} hrs</h2>
-                    </div>
-                    <div style="flex: 1; background: linear-gradient(135deg, #834d9b 0%, #d04ed6 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
-                        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Avg per Case</h4>
-                        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{format_inr(avg_per_case)}</h2>
-                    </div>
-                    <div style="flex: 1; background: linear-gradient(135deg, #cb2d3e 0%, #ef473a 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
-                        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Avg / Hour</h4>
-                        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{format_inr(avg_per_hr)}</h2>
-                    </div>
-                </div>
+<div style="display: flex; gap: 15px; margin-top: 10px; margin-bottom: 25px; flex-wrap: wrap;">
+    <div style="flex: 1; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
+        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Total Cases</h4>
+        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{total_cases}</h2>
+    </div>
+    <div style="flex: 1; background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
+        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Total Amount</h4>
+        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{format_inr(total_amt)}</h2>
+    </div>
+    <div style="flex: 1; background: linear-gradient(135deg, #ff9966 0%, #ff5e62 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
+        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Total Hours</h4>
+        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{total_hrs:.1f} hrs</h2>
+    </div>
+    <div style="flex: 1; background: linear-gradient(135deg, #834d9b 0%, #d04ed6 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
+        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Avg per Case</h4>
+        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{format_inr(avg_per_case)}</h2>
+    </div>
+    <div style="flex: 1; background: linear-gradient(135deg, #cb2d3e 0%, #ef473a 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; color: white;">
+        <h4 style="margin:0; font-size: 1.1rem; text-transform: uppercase;">Avg / Hour</h4>
+        <h2 style="margin: 10px 0 0 0; font-size: 2rem;">{format_inr(avg_per_hr)}</h2>
+    </div>
+</div>
                 ''', unsafe_allow_html=True)
                 
-                table_html = '''
-                <style>
-                .premium-table {
+                table_html = """
+<style>
+.premium-table {"""
                     width: 100%;
                     border-collapse: collapse;
                     font-family: 'Times New Roman', Times, serif;
@@ -299,7 +299,7 @@ if choice == "Dashboard & Summary":
                     overflow: hidden;
                     margin-bottom: 20px;
                 }
-                .premium-table th {
+.premium-table th {
                     background-color: #4A90E2;
                     color: white;
                     padding: 12px 15px;
@@ -307,34 +307,28 @@ if choice == "Dashboard & Summary":
                     font-size: 1.05rem;
                     font-weight: bold;
                 }
-                .premium-table td {
+.premium-table td {
                     padding: 10px 15px;
                     border-bottom: 1px solid #e0e0e0;
                     color: #333;
                 }
-                .premium-table tr:nth-child(even) {
+.premium-table tr:nth-child(even) {
                     background-color: #f8f9fa;
                 }
-                .premium-table tr:hover {
+.premium-table tr:hover {
                     background-color: #e2eeff;
                 }
-                </style>
-                <table class="premium-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th><th>Date</th><th>Hospital</th><th>Patient</th><th>Age/Sex</th><th>Risk</th><th>Anaesthesia</th><th>Surgery</th><th>Expected</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+</style>
+<table class="premium-table">
+    <thead>
+        <tr>
+            <th>ID</th><th>Date</th><th>Hospital</th><th>Patient</th><th>Age/Sex</th><th>Risk</th><th>Anaesthesia</th><th>Surgery</th><th>Expected</th>
+        </tr>
+    </thead>
+    <tbody>
                 '''
                 for _, r in filtered_df.iterrows():
-                    table_html += f'''
-                        <tr>
-                            <td>{r['id']}</td><td>{r['date']}</td><td>{r['hospital_name']}</td><td>{r['patient_name']}</td>
-                            <td>{r['age']} / {r['gender']}</td><td>{r['risk_profile']}</td><td>{r['anaesthesia_type']}</td>
-                            <td>{r['surgery_name']}</td><td><b>{format_inr(r['expected_amount'])}</b></td>
-                        </tr>
-                    '''
+                    table_html += f"<tr><td>{r['id']}</td><td>{r['date']}</td><td>{r['hospital_name']}</td><td>{r['patient_name']}</td><td>{r['age']} / {r['gender']}</td><td>{r['risk_profile']}</td><td>{r['anaesthesia_type']}</td><td>{r['surgery_name']}</td><td><b>{format_inr(r['expected_amount'])}</b></td></tr>"
                 table_html += '</tbody></table>'
                 st.markdown(table_html, unsafe_allow_html=True)
 
@@ -558,7 +552,7 @@ if choice == "Dashboard & Summary":
             
             def format_currency_statement(val):
                 if pd.isna(val) or val is None: return ""
-                if val < 0: return f"₹({format_inr(abs(val)).replace("₹", "")})"
+                if val < 0: return f"₹({format_inr(abs(val)).replace('₹', '')})"
                 return format_inr(val)
  
             formatted_df = df_pl.style.format({
