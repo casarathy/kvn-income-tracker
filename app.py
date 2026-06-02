@@ -109,6 +109,23 @@ def standardize_date(date_str):
             continue
     return datetime.now().strftime("%Y-%m-%d")
 
+def format_inr(number):
+    try:
+        if pd.isna(number): return ""
+        is_negative = float(number) < 0
+        number = abs(float(number))
+        s, *d = str(round(number, 2)).split('.')
+        d = '.' + d[0].ljust(2, '0') if d else '.00'
+        
+        if len(s) > 3:
+            s = s[:-3] + ',' + s[-3:]
+            while len(s.split(',')[0]) > 2:
+                first_part = s.split(',')[0]
+                s = first_part[:-2] + ',' + first_part[-2:] + ',' + ','.join(s.split(',')[1:])
+        return f"₹{'-' if is_negative else ''}{s}{d}"
+    except (ValueError, TypeError):
+        return "₹0.00"
+
 # Initialize EasyOCR Reader (cached and optimized for low-memory CPU environments)
 @st.cache_resource
 def load_ocr_reader():
@@ -182,11 +199,11 @@ if choice == "Dashboard & Summary":
 
         # Core Financial Metrics Cards
         col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("Expected Fees (Cases)", f"₹{total_expected:,.2f}")
-        col2.metric("Collected Fees (Cases)", f"₹{total_actual:,.2f}")
-        col3.metric("True Pending Receivables", f"₹{pending_receivables:,.2f}")
-        col4.metric("Total TDS Deductions", f"₹{total_tds:,.2f}")
-        col5.metric("Net Income (After TDS)", f"₹{total_net_income:,.2f}")
+        col1.metric("Expected Fees (Cases)", format_inr(total_expected))
+        col2.metric("Collected Fees (Cases)", format_inr(total_actual))
+        col3.metric("True Pending Receivables", format_inr(pending_receivables))
+        col4.metric("Total TDS Deductions", format_inr(total_tds))
+        col5.metric("Net Income (After TDS)", format_inr(total_net_income))
         
         st.markdown("---")
         
@@ -203,7 +220,7 @@ if choice == "Dashboard & Summary":
                 
                 st.caption("🔴 Outstanding Receivables by Facility:")
                 for _, row in hosp_summary.iterrows():
-                    st.markdown(f"<span class='pending-red'>• 🏥 **{row['hospital_name']}** — Total Owed: **₹{row['total_owed']:,.2f}** *(across {row['case_count']} pending cases)*</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span class='pending-red'>• 🏥 **{row['hospital_name']}** — Total Owed: **{format_inr(row['total_owed'])}** *(across {row['case_count']} pending cases)*</span>", unsafe_allow_html=True)
         else:
             st.success("🎉 All accounts clear! No outstanding items left un-reconciled.")
 
@@ -334,11 +351,11 @@ if choice == "Dashboard & Summary":
             grand_net = (tot_act + sum_salary + sum_other) - sum_tds
             
             mc1, mc2, mc3, mc4, mc5 = st.columns(5)
-            mc1.metric("Expected Case Fees", f"₹{tot_exp:,.2f}")
-            mc2.metric("Collected Case Fees", f"₹{tot_act:,.2f}")
-            mc3.metric("Owed Receivables", f"₹{tot_pend:,.2f}")
-            mc4.metric("TDS Deductions", f"₹{sum_tds:,.2f}")
-            mc5.metric("Net Income (After TDS)", f"₹{grand_net:,.2f}", delta=f"{len(selected_months)} Months Aggregated")
+            mc1.metric("Expected Case Fees", format_inr(tot_exp))
+            mc2.metric("Collected Case Fees", format_inr(tot_act))
+            mc3.metric("Owed Receivables", format_inr(tot_pend))
+            mc4.metric("TDS Deductions", format_inr(sum_tds))
+            mc5.metric("Net Income (After TDS)", format_inr(grand_net), delta=f"{len(selected_months)} Months Aggregated")
             
             st.markdown("---")
             st.subheader("📑 Global Pipeline Split (Aggregated over Selection)")
@@ -462,8 +479,8 @@ if choice == "Dashboard & Summary":
             
             def format_currency_statement(val):
                 if pd.isna(val) or val is None: return ""
-                if val < 0: return f"₹({abs(val):,.2f})"
-                return f"₹{val:,.2f}"
+                if val < 0: return f"₹({format_inr(abs(val)).replace("₹", "")})"
+                return format_inr(val)
  
             formatted_df = df_pl.style.format({
                 f"Period A ({month_a})": format_currency_statement,
@@ -523,7 +540,7 @@ elif choice == "Import Cases (CSV / Image)":
         st.download_button("⬇️ Download Blank CSV Import Template", data=csv_temp, file_name="kvn_case_import_template.csv", mime="text/csv")
         
         uploaded_csv = st.file_uploader("Upload Completed Import Sheet", type=["csv"], key="csv_import_file")
-        if uploaded_csv is not None:
+        if uploaded_csv is not None and st.button("Process CSV File", type="primary"):
             try:
                 import_df = pd.read_csv(uploaded_csv)
                 # Drop rows that are completely empty or missing critical identifiers
@@ -777,7 +794,7 @@ elif choice == "Update Fixed Income & TDS":
                         "INSERT INTO tds_logs (month_year, source_type, source_name, tds_amount) VALUES (?, ?, ?, ?)",
                         (curr_month, tds_source_type, final_source_name, tds_amount)
                     )
-                    st.success(f"TDS of ₹{tds_amount:,.2f} logged for {final_source_name}!")
+                    st.success(f"TDS of {format_inr(tds_amount).replace("₹", "")} logged for {final_source_name}!")
                     st.rerun()
                 else:
                     st.error("Please enter a valid source or hospital name.")
