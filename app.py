@@ -109,11 +109,16 @@ def sync_sqlite_table_to_gsheets(table_name):
         df = pd.read_sql_query(f"SELECT * FROM {table_name}", sql_conn)
         sql_conn.close()
         
+        df = df.fillna("")
+        
         gs_conn = st.connection("gsheets", type=GSheetsConnection)
         gs_conn.update(worksheet=table_name, data=df)
         st.cache_data.clear()
     except Exception as e:
-        st.error(f"Failed to sync {table_name} to Google Sheets: {e}")
+        if "200" in str(e):
+            pass # Ignore Response 200 which means success
+        else:
+            st.error(f"Failed to sync {table_name} to Google Sheets: {e} (Type: {type(e)})")
 
 def execute_db(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
