@@ -5,3 +5,4 @@ easyocr
 torch
 torchvision
 pillow
+st-gsheets-connection

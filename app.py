@@ -7,6 +7,7 @@ import easyocr
 import numpy as np
 from PIL import Image
 import os
+from streamlit_gsheets import GSheetsConnection
 
 # --- DATABASE SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -76,16 +77,57 @@ def init_db():
 
 init_db()
 
+@st.cache_resource
+def sync_gsheets_to_sqlite():
+    try:
+        gs_conn = st.connection("gsheets", type=GSheetsConnection)
+        cases_df = gs_conn.read(worksheet="case_logs")
+        fixed_df = gs_conn.read(worksheet="fixed_income")
+        tds_df = gs_conn.read(worksheet="tds_logs")
+        
+        with sqlite3.connect(DB_FILE) as sql_conn:
+            if not cases_df.empty and 'id' in cases_df.columns:
+                cases_df.to_sql('case_logs', sql_conn, if_exists='replace', index=False)
+            if not fixed_df.empty and 'month_year' in fixed_df.columns:
+                fixed_df.to_sql('fixed_income', sql_conn, if_exists='replace', index=False)
+            if not tds_df.empty and 'id' in tds_df.columns:
+                tds_df.to_sql('tds_logs', sql_conn, if_exists='replace', index=False)
+    except Exception as e:
+        print(f"Error syncing from gsheets: {e}")
+    return True
+
+sync_gsheets_to_sqlite()
+
 # --- HELPER FUNCTIONS ---
 def run_query(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
         return pd.read_sql_query(query, conn, params=params)
+
+def sync_sqlite_table_to_gsheets(table_name):
+    try:
+        sql_conn = sqlite3.connect(DB_FILE)
+        df = pd.read_sql_query(f"SELECT * FROM {table_name}", sql_conn)
+        sql_conn.close()
+        
+        gs_conn = st.connection("gsheets", type=GSheetsConnection)
+        gs_conn.update(worksheet=table_name, data=df)
+        st.cache_data.clear()
+    except Exception as e:
+        st.error(f"Failed to sync {table_name} to Google Sheets: {e}")
 
 def execute_db(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
         c.execute(query, params)
         conn.commit()
+        
+    query_lower = query.lower()
+    if "case_logs" in query_lower:
+        sync_sqlite_table_to_gsheets("case_logs")
+    if "fixed_income" in query_lower:
+        sync_sqlite_table_to_gsheets("fixed_income")
+    if "tds_logs" in query_lower:
+        sync_sqlite_table_to_gsheets("tds_logs")
 
 def get_all_available_months():
     months = set()
