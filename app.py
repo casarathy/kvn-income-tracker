@@ -110,15 +110,28 @@ def sync_sqlite_table_to_gsheets(table_name):
         sql_conn.close()
         
         df = df.fillna("")
-        
         gs_conn = st.connection("gsheets", type=GSheetsConnection)
-        gs_conn.update(worksheet=table_name, data=df)
+        
+        # Bypass buggy st-gsheets update method and use underlying gspread client
+        spreadsheet_url = st.secrets.connections.gsheets.spreadsheet
+        if "http" in spreadsheet_url:
+            spreadsheet = gs_conn.client.open_by_url(spreadsheet_url)
+        else:
+            spreadsheet = gs_conn.client.open_by_key(spreadsheet_url)
+            
+        worksheet = spreadsheet.worksheet(table_name)
+        worksheet.clear()
+        
+        data_list = [df.columns.values.tolist()] + df.values.tolist()
+        try:
+            worksheet.update(data_list)
+        except TypeError:
+            # Handle gspread >= 6.0 signature changes
+            worksheet.update(values=data_list, range_name="A1")
+            
         st.cache_data.clear()
     except Exception as e:
-        if "200" in str(e):
-            pass # Ignore Response 200 which means success
-        else:
-            st.error(f"Failed to sync {table_name} to Google Sheets: {e} (Type: {type(e)})")
+        st.error(f"Failed to sync {table_name} to Google Sheets: {e}")
 
 def execute_db(query, params=()):
     with sqlite3.connect(DB_FILE) as conn:
