@@ -110,14 +110,17 @@ def sync_sqlite_table_to_gsheets(table_name):
         sql_conn.close()
         
         df = df.fillna("")
-        gs_conn = st.connection("gsheets", type=GSheetsConnection)
         
-        # Bypass buggy st-gsheets update method and use underlying gspread client
-        spreadsheet_url = st.secrets.connections.gsheets.spreadsheet
+        # Use pure gspread to avoid st-gsheets-connection bugs
+        import gspread
+        creds = dict(st.secrets["connections"]["gsheets"])
+        gc = gspread.service_account_from_dict(creds)
+        
+        spreadsheet_url = creds.get("spreadsheet", "")
         if "http" in spreadsheet_url:
-            spreadsheet = gs_conn.client.open_by_url(spreadsheet_url)
+            spreadsheet = gc.open_by_url(spreadsheet_url)
         else:
-            spreadsheet = gs_conn.client.open_by_key(spreadsheet_url)
+            spreadsheet = gc.open_by_key(spreadsheet_url)
             
         worksheet = spreadsheet.worksheet(table_name)
         worksheet.clear()
@@ -126,7 +129,6 @@ def sync_sqlite_table_to_gsheets(table_name):
         try:
             worksheet.update(data_list)
         except TypeError:
-            # Handle gspread >= 6.0 signature changes
             worksheet.update(values=data_list, range_name="A1")
             
         st.cache_data.clear()
