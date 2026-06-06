@@ -156,19 +156,20 @@ def sync_sqlite_table_to_gsheets(table_name):
     except Exception as e:
         st.error(f"Failed to sync {table_name} to Google Sheets: {e}")
 
-def execute_db(query, params=()):
+def execute_db(query, params=(), sync_gsheets=True):
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
         c.execute(query, params)
         conn.commit()
         
-    query_lower = query.lower()
-    if "case_logs" in query_lower:
-        sync_sqlite_table_to_gsheets("case_logs")
-    if "fixed_income" in query_lower:
-        sync_sqlite_table_to_gsheets("fixed_income")
-    if "tds_logs" in query_lower:
-        sync_sqlite_table_to_gsheets("tds_logs")
+    if sync_gsheets:
+        query_lower = query.lower()
+        if "case_logs" in query_lower:
+            sync_sqlite_table_to_gsheets("case_logs")
+        if "fixed_income" in query_lower:
+            sync_sqlite_table_to_gsheets("fixed_income")
+        if "tds_logs" in query_lower:
+            sync_sqlite_table_to_gsheets("tds_logs")
 
 def get_all_available_months():
     months = set()
@@ -781,19 +782,24 @@ elif choice == "Import Cases (CSV / Image)":
                                 
                         if is_update:
                             execute_db(
-                                '''UPDATE case_logs 
-                                   SET date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, age=?, gender=?, surgery_name=?, expected_amount=?, actual_amount=?, status=?, risk_profile=?, anaesthesia_type=?
-                                   WHERE id=?''',
-                                (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), exp_amt, act_amt, stat, row_risk, row_cat, row_id)
+                                '''INSERT OR REPLACE INTO case_logs 
+                                   (id, date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, anaesthesia_type) 
+                                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                                (row_id, clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), exp_amt, act_amt, stat, row_risk, row_cat),
+                                sync_gsheets=False
                             )
                         else:
                             execute_db(
                                 '''INSERT INTO case_logs 
                                    (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, anaesthesia_type) 
                                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                                (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), exp_amt, act_amt, stat, row_risk, row_cat)
+                                (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), exp_amt, act_amt, stat, row_risk, row_cat),
+                                sync_gsheets=False
                             )
                         success_count += 1
+                        
+                    if success_count > 0:
+                        sync_sqlite_table_to_gsheets("case_logs")
                         
                     st.session_state["import_success_msg"] = f"Successfully processed {success_count} cases into the dashboard!"
                     st.rerun()
