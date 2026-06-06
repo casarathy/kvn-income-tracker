@@ -721,7 +721,7 @@ elif choice == "Import Cases (CSV / Image)":
     
     with tab1:
         st.subheader("CSV Mass Data Entry")
-        template_df = pd.DataFrame(columns=['date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'age', 'gender', 'surgery_name', 'expected_amount', 'risk_profile', 'anaesthesia_type'])
+        template_df = pd.DataFrame(columns=['id', 'date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount', 'actual_amount', 'status', 'age', 'gender', 'risk_profile', 'anaesthesia_type'])
         csv_temp = template_df.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ Download Blank CSV Import Template", data=csv_temp, file_name="kvn_case_import_template.csv", mime="text/csv")
         
@@ -739,24 +739,43 @@ elif choice == "Import Cases (CSV / Image)":
                         if pd.isna(row['patient_name']) or str(row['patient_name']).strip() == "":
                             continue
                         clean_d = standardize_date(row['date'])
-                        row_age = str(row['age']) if 'age' in import_df.columns else ""
-                        row_gen = str(row['gender']) if 'gender' in import_df.columns else ""
-                        row_risk = str(row['risk_profile']) if 'risk_profile' in import_df.columns else "Low"
+                        row_age = str(row['age']) if 'age' in import_df.columns and not pd.isna(row['age']) else ""
+                        row_gen = str(row['gender']) if 'gender' in import_df.columns and not pd.isna(row['gender']) else ""
+                        row_risk = str(row['risk_profile']) if 'risk_profile' in import_df.columns and not pd.isna(row['risk_profile']) else "Low"
+                        
+                        act_amt = float(row['actual_amount']) if 'actual_amount' in import_df.columns and not pd.isna(row['actual_amount']) else 0.0
+                        stat = str(row['status']) if 'status' in import_df.columns and not pd.isna(row['status']) else "Pending"
                         
                         # Handle either key for backwards compatibility on custom sheets
-                        if 'anaesthesia_type' in import_df.columns:
+                        if 'anaesthesia_type' in import_df.columns and not pd.isna(row['anaesthesia_type']):
                             row_cat = str(row['anaesthesia_type'])
-                        elif 'surgery_category' in import_df.columns:
+                        elif 'surgery_category' in import_df.columns and not pd.isna(row['surgery_category']):
                             row_cat = str(row['surgery_category'])
                         else:
                             row_cat = "General"
                             
-                        execute_db(
-                            '''INSERT INTO case_logs 
-                               (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, anaesthesia_type) 
-                               VALUES (?,?,?,?,?,?,?,?,?,0.0,'Pending',?,?)''',
-                            (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']), row_risk, row_cat)
-                        )
+                        is_update = False
+                        if 'id' in import_df.columns and not pd.isna(row['id']):
+                            try:
+                                row_id = int(float(row['id']))
+                                is_update = True
+                            except ValueError:
+                                is_update = False
+                                
+                        if is_update:
+                            execute_db(
+                                '''UPDATE case_logs 
+                                   SET date=?, from_time=?, to_time=?, hospital_name=?, patient_name=?, age=?, gender=?, surgery_name=?, expected_amount=?, actual_amount=?, status=?, risk_profile=?, anaesthesia_type=?
+                                   WHERE id=?''',
+                                (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']), act_amt, stat, row_risk, row_cat, row_id)
+                            )
+                        else:
+                            execute_db(
+                                '''INSERT INTO case_logs 
+                                   (date, from_time, to_time, hospital_name, patient_name, age, gender, surgery_name, expected_amount, actual_amount, status, risk_profile, anaesthesia_type) 
+                                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                                (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']), act_amt, stat, row_risk, row_cat)
+                            )
                     st.success(f"Successfully processed {len(import_df)} cases into the dashboard!")
                     st.rerun()
                 else: st.error("Schema layout mismatch.")
