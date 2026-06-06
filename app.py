@@ -721,6 +721,11 @@ elif choice == "Import Cases (CSV / Image)":
     
     with tab1:
         st.subheader("CSV Mass Data Entry")
+        
+        if "import_success_msg" in st.session_state:
+            st.success(st.session_state["import_success_msg"])
+            del st.session_state["import_success_msg"]
+            
         template_df = pd.DataFrame(columns=['id', 'date', 'from_time', 'to_time', 'hospital_name', 'patient_name', 'surgery_name', 'expected_amount', 'actual_amount', 'status', 'age', 'gender', 'risk_profile', 'anaesthesia_type'])
         csv_temp = template_df.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ Download Blank CSV Import Template", data=csv_temp, file_name="kvn_case_import_template.csv", mime="text/csv")
@@ -776,7 +781,7 @@ elif choice == "Import Cases (CSV / Image)":
                                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                                 (clean_d, str(row['from_time']), str(row['to_time']), str(row['hospital_name']), str(row['patient_name']), row_age, row_gen, str(row['surgery_name']), float(row['expected_amount']), act_amt, stat, row_risk, row_cat)
                             )
-                    st.success(f"Successfully processed {len(import_df)} cases into the dashboard!")
+                    st.session_state["import_success_msg"] = f"Successfully processed {len(import_df)} cases into the dashboard!"
                     st.rerun()
                 else: st.error("Schema layout mismatch.")
             except Exception as e: st.error(f"Error parsing file: {e}")
