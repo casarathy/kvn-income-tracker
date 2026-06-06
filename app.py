@@ -80,10 +80,31 @@ init_db()
 @st.cache_resource
 def sync_gsheets_to_sqlite():
     try:
-        gs_conn = st.connection("gsheets", type=GSheetsConnection)
-        cases_df = gs_conn.read(worksheet="case_logs")
-        fixed_df = gs_conn.read(worksheet="fixed_income")
-        tds_df = gs_conn.read(worksheet="tds_logs")
+        import gspread
+        creds = dict(st.secrets["connections"]["gsheets"])
+        gc = gspread.service_account_from_dict(creds)
+        
+        spreadsheet_url = creds.get("spreadsheet", "")
+        if "http" in spreadsheet_url:
+            spreadsheet = gc.open_by_url(spreadsheet_url)
+        else:
+            spreadsheet = gc.open_by_key(spreadsheet_url)
+            
+        def get_df(sheet_name):
+            try:
+                worksheet = spreadsheet.worksheet(sheet_name)
+                # get_all_records returns a list of dicts. If empty, it returns []
+                data = worksheet.get_all_records()
+                if data:
+                    return pd.DataFrame(data)
+                return pd.DataFrame()
+            except Exception as e:
+                print(f"Error reading {sheet_name}: {e}")
+                return pd.DataFrame()
+
+        cases_df = get_df("case_logs")
+        fixed_df = get_df("fixed_income")
+        tds_df = get_df("tds_logs")
         
         with sqlite3.connect(DB_FILE) as sql_conn:
             if not cases_df.empty and 'id' in cases_df.columns:
